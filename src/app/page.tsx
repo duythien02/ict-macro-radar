@@ -9,7 +9,6 @@ import {
   removeTrade,
   fetchConfig,
   saveConfig,
-  testSupabaseConnection,
 } from "@/lib/supabase";
 
 export default function Home() {
@@ -18,11 +17,6 @@ export default function Home() {
   const [cfg, setCfg] = useState<AppConfig>({ bal: 50000, risk: 0.5, maxT: 3, maxL: 2 });
   const [chk, setChk] = useState<boolean[]>(CHK.map(() => false));
   const [theme, setTheme] = useState<"dark" | "light">("dark");
-  const [sbStatus, setSbStatus] = useState<{ connected: boolean; checking: boolean; msg: string }>({
-    connected: false,
-    checking: false,
-    msg: "Đang kiểm tra...",
-  });
 
   // Calendar state
   const [calYear, setCalYear] = useState<number>(2026);
@@ -83,21 +77,6 @@ export default function Home() {
 
       const loadedTrades = await fetchTrades();
       setTrades(loadedTrades);
-
-      // Check Supabase connection
-      const sbUrl = localStorage.getItem("ict_sb_url") || process.env.NEXT_PUBLIC_SUPABASE_URL;
-      const sbKey = localStorage.getItem("ict_sb_key") || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-      if (sbUrl && sbKey) {
-        setSbStatus({ connected: false, checking: true, msg: "Đang kiểm tra kết nối Supabase..." });
-        const res = await testSupabaseConnection(sbUrl, sbKey);
-        setSbStatus({ connected: res.success, checking: false, msg: res.message });
-      } else {
-        setSbStatus({
-          connected: false,
-          checking: false,
-          msg: "Chưa cấu hình Supabase. Ứng dụng đang dùng bộ nhớ LocalStorage của trình duyệt.",
-        });
-      }
     }
     init();
   }, []);
@@ -394,7 +373,7 @@ export default function Home() {
           Hiệu suất & Lịch P&L
         </button>
         <button className={tab === "cfg" ? "active" : ""} onClick={() => setTab("cfg")}>
-          Cài đặt & Supabase
+          Cài đặt
         </button>
       </nav>
 
@@ -1015,109 +994,29 @@ export default function Home() {
             </div>
           </div>
 
-          {/* Supabase Connection */}
+          {/* Data panel */}
           <div className="panel">
-            <h2>Kết nối Cơ sở dữ liệu Supabase</h2>
+            <h2>Dữ liệu</h2>
             <div className="sub-title" style={{ margin: "6px 0 16px" }}>
-              Đồng bộ dữ liệu thời gian thực lên Supabase Cloud để không bao giờ bị mất lệnh.
+              Tải dữ liệu mẫu để kiểm tra lịch P&L hoặc xóa dữ liệu để bắt đầu lại.
             </div>
-
-            <div style={{ marginBottom: "16px" }}>
-              <div className={`supabase-badge ${sbStatus.connected ? "online" : "offline"}`}>
-                <span className={`status-dot ${sbStatus.connected ? "connected" : "disconnected"}`} />
-                {sbStatus.connected ? "Đã kết nối Supabase Cloud" : "Đang dùng LocalStorage"}
-              </div>
-              <div className="sub-title" style={{ marginTop: "6px" }}>{sbStatus.msg}</div>
-            </div>
-
-            <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
-              <div>
-                <label>Supabase Project URL</label>
-                <input
-                  placeholder="https://xyzcompany.supabase.co"
-                  defaultValue={typeof window !== "undefined" ? localStorage.getItem("ict_sb_url") || "" : ""}
-                  id="sb_url_input"
-                />
-              </div>
-              <div>
-                <label>Supabase Anon Public Key</label>
-                <input
-                  type="password"
-                  placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
-                  defaultValue={typeof window !== "undefined" ? localStorage.getItem("ict_sb_key") || "" : ""}
-                  id="sb_key_input"
-                />
-              </div>
-
-              <div style={{ display: "flex", gap: "10px", flexWrap: "wrap", marginTop: "4px" }}>
-                <button
-                  className="btn primary"
-                  onClick={async () => {
-                    const u = (document.getElementById("sb_url_input") as HTMLInputElement)?.value.trim();
-                    const k = (document.getElementById("sb_key_input") as HTMLInputElement)?.value.trim();
-                    if (!u || !k) {
-                      alert("Vui lòng điền đủ Supabase URL và Anon Key!");
-                      return;
+            <div style={{ display: "flex", gap: "10px", marginTop: "12px" }}>
+              <button className="btn" onClick={handleLoadDemo}>
+                Tải dữ liệu mẫu
+              </button>
+              <button
+                className="btn danger"
+                onClick={() => {
+                  if (confirm("Bạn có chắc chắn muốn xóa toàn bộ lệnh?")) {
+                    setTrades([]);
+                    if (typeof window !== "undefined") {
+                      localStorage.removeItem("ictm");
                     }
-                    localStorage.setItem("ict_sb_url", u);
-                    localStorage.setItem("ict_sb_key", k);
-                    setSbStatus({ connected: false, checking: true, msg: "Đang kiểm tra kết nối..." });
-                    const res = await testSupabaseConnection(u, k);
-                    setSbStatus({ connected: res.success, checking: false, msg: res.message });
-                    if (res.success) {
-                      const cloudTrades = await fetchTrades();
-                      setTrades(cloudTrades);
-                    }
-                  }}
-                >
-                  Kiểm tra & Lưu kết nối
-                </button>
-
-                <button
-                  className="btn"
-                  onClick={async () => {
-                    if (!sbStatus.connected) {
-                      alert("Vui lòng kết nối Supabase trước khi đồng bộ!");
-                      return;
-                    }
-                    if (confirm(`Đồng bộ toàn bộ ${trades.length} lệnh hiện tại lên Supabase?`)) {
-                      for (const t of trades) {
-                        await insertTrade(t);
-                      }
-                      alert("Đã đồng bộ toàn bộ dữ liệu lên Supabase thành công!");
-                    }
-                  }}
-                >
-                  Đồng bộ dữ liệu lên Cloud
-                </button>
-              </div>
-            </div>
-
-            <hr style={{ borderColor: "var(--line)", margin: "20px 0" }} />
-
-            <div>
-              <h3>Dữ liệu Mẫu & Đặt lại</h3>
-              <p className="sub-title" style={{ margin: "6px 0 14px" }}>
-                Tải bộ 5 lệnh mẫu kiểm tra lịch P&L hoặc xóa dữ liệu để bắt đầu lại.
-              </p>
-              <div style={{ display: "flex", gap: "10px" }}>
-                <button className="btn" onClick={handleLoadDemo}>
-                  Tải dữ liệu mẫu
-                </button>
-                <button
-                  className="btn danger"
-                  onClick={() => {
-                    if (confirm("Bạn có chắc chắn muốn xóa toàn bộ lệnh?")) {
-                      setTrades([]);
-                      if (typeof window !== "undefined") {
-                        localStorage.removeItem("ictm");
-                      }
-                    }
-                  }}
-                >
-                  Xóa toàn bộ lệnh
-                </button>
-              </div>
+                  }
+                }}
+              >
+                Xóa toàn bộ lệnh
+              </button>
             </div>
           </div>
         </div>
