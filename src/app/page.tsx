@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useMemo } from "react";
 import { Trade, AppConfig, MacroSession, PropAccount, AccountType, PropFirm, AccountStatus, CFDPhase, UserProfile } from "@/types";
-import { SES, CHK, PV, SETUPS, DEFAULT_ACCOUNTS, PROP_PRESETS } from "@/lib/constants";
+import { SES, CHK, PV, SETUPS, DEFAULT_ACCOUNTS, PROP_PRESETS, SQL_SCHEMA_SCRIPT } from "@/lib/constants";
 import {
   fetchTrades,
   insertTrade,
@@ -14,11 +14,24 @@ import {
   removeAccount,
   fetchUsers,
   registerOrLoginUser,
+  checkDatabaseHealth,
+  saveSupabaseCredentials,
+  DatabaseHealthStatus,
 } from "@/lib/supabase";
 
 export default function Home() {
   const [mounted, setMounted] = useState(false);
   const [tab, setTab] = useState<"radar" | "prop" | "check" | "log" | "stat" | "cfg">("radar");
+
+  // Database Connection & Initialization state
+  const [dbHealth, setDbHealth] = useState<DatabaseHealthStatus | null>(null);
+  const [dbModalOpen, setDbModalOpen] = useState(false);
+  const [dbChecking, setDbChecking] = useState(false);
+  const [sbUrlInput, setSbUrlInput] = useState("");
+  const [sbKeyInput, setSbKeyInput] = useState("");
+  const [copiedSql, setCopiedSql] = useState(false);
+  const [initNickInput, setInitNickInput] = useState("trader_real");
+  const [initPresetIdx, setInitPresetIdx] = useState(0);
 
   // User Profile state
   const [activeUser, setActiveUser] = useState<UserProfile>({ nickname: "demo_trader", displayName: "Demo Trader" });
@@ -111,6 +124,91 @@ export default function Home() {
     overlayMouseDownRef.current = null;
   };
 
+  // Run Database Health Check
+  const runDbHealthCheck = async (customUrl?: string, customKey?: string) => {
+    setDbChecking(true);
+    const health = await checkDatabaseHealth(customUrl, customKey);
+    setDbHealth(health);
+    if (health.url) setSbUrlInput(health.url);
+    if (health.anonKey) setSbKeyInput(health.anonKey);
+    setDbChecking(false);
+
+    // If database is not configured or missing tables, prompt initialization
+    if (!health.connected || !health.allTablesReady) {
+      setDbModalOpen(true);
+    }
+    return health;
+  };
+
+  // Test and Save Database Credentials
+  const handleTestAndSaveDb = async () => {
+    if (!sbUrlInput.trim() || !sbKeyInput.trim()) {
+      alert("Vui lòng nhập đầy đủ Supabase URL và Anon Public Key!");
+      return;
+    }
+    saveSupabaseCredentials(sbUrlInput, sbKeyInput);
+    const health = await runDbHealthCheck(sbUrlInput, sbKeyInput);
+    if (health.allTablesReady) {
+      alert("Kết nối Database thành công! Tất cả 4 bảng (users, accounts, trades, user_config) đã sẵn sàng.");
+      await loadUserData(activeUser.nickname);
+    } else {
+      alert(
+        `Kết nối được nhưng CSDL còn thiếu bảng: ${health.missingTables.join(", ")}.\nVui lòng bấm 'Sao chép toàn bộ mã SQL' và chạy trong Supabase SQL Editor!`
+      );
+    }
+  };
+
+  // Complete Initial Database Setup (User & Account)
+  const handleCompleteDbSetup = async () => {
+    const nick = initNickInput.trim().toLowerCase().replace(/[^a-z0-9_-]/g, "") || "trader_1";
+    const preset = PROP_PRESETS[initPresetIdx] || PROP_PRESETS[0];
+
+    // 1. Register User in Supabase
+    const userProfile = await registerOrLoginUser(nick, nick);
+    setActiveUser(userProfile);
+
+    // 2. Create Initial Prop Account in Supabase
+    const newAcc: PropAccount = {
+      id: `ACC-${preset.firm.toUpperCase()}-${Date.now().toString().slice(-6)}`,
+      userNickname: nick,
+      name: preset.label,
+      propFirm: preset.firm,
+      accountType: preset.type,
+      balance: preset.balance,
+      currentBalance: preset.balance,
+      mll: preset.mll,
+      mdl: preset.mdl,
+      target: preset.target,
+      status: "eval",
+      consistencyPct: preset.consistency || 50,
+      riskPct: preset.riskPct || 0.5,
+      maxTradesDaily: preset.maxTradesDaily || 3,
+      maxLossRDaily: preset.maxLossRDaily || 2,
+      currentPhase: 1,
+      cfdPhases: preset.phases || [],
+    };
+
+    await insertAccount(newAcc);
+    setAccounts([newAcc]);
+    setActiveAccountId(newAcc.id);
+    setTradeFormAccId(newAcc.id);
+
+    // 3. Save initial config
+    const newCfg: AppConfig = {
+      userNickname: nick,
+      activeAccountId: newAcc.id,
+      bal: preset.balance,
+      risk: preset.riskPct || 0.5,
+      maxT: preset.maxTradesDaily || 3,
+      maxL: preset.maxLossRDaily || 2,
+    };
+    setCfg(newCfg);
+    await saveConfig(newCfg, nick);
+
+    setDbModalOpen(false);
+    alert(`Khởi tạo thành công! Dữ liệu của Trader '${nick}' đã được kết nối và lưu trữ trực tiếp trên Supabase.`);
+  };
+
   // Load User Data helper
   const loadUserData = async (nickname: string, displayName?: string) => {
     const userProfile = await registerOrLoginUser(nickname, displayName);
@@ -153,9 +251,15 @@ export default function Home() {
       document.documentElement.setAttribute("data-theme", "dark");
     }
 
-    // Load active user
-    const savedNick = localStorage.getItem("ict_active_user") || "demo_trader";
-    loadUserData(savedNick);
+    // Run Database Health Check & load real data
+    runDbHealthCheck().then(async (health) => {
+      const savedNick = localStorage.getItem("ict_active_user") || "demo_trader";
+      if (health.allTablesReady) {
+        await loadUserData(savedNick);
+      } else {
+        setDbModalOpen(true);
+      }
+    });
   }, []);
 
   // Clocks loop
@@ -402,6 +506,20 @@ export default function Home() {
 
   // Attempt New Trade Handler - Centralized Guard for ALL Entry Buttons
   const handleAttemptNewTrade = (sessionId?: string) => {
+    // 0. Bắt buộc kết nối database dữ liệu thật trước khi sử dụng
+    if (!dbHealth?.allTablesReady) {
+      alert("Hệ thống chưa kết nối dữ liệu thật với Database Supabase!\nVui lòng hoàn tất khởi tạo Database trước khi giao dịch.");
+      setDbModalOpen(true);
+      return;
+    }
+
+    if (accounts.length === 0 || !activeAcc) {
+      alert("Chưa có tài khoản quỹ nào trong Database thật!\nVui lòng khởi tạo tài khoản quỹ trước khi vào lệnh.");
+      setTab("prop");
+      setAccModalOpen(true);
+      return;
+    }
+
     // 1. Kiểm tra khóa lệnh do chạm giới hạn rủi ro / tài khoản
     if (isLocked) {
       let reason = "TÀI KHOẢN ĐANG BỊ KHÓA LỆNH:\n";
@@ -672,6 +790,22 @@ export default function Home() {
           </span>
         </div>
 
+        {/* Database Real Data Indicator Pill */}
+        <div
+          className={`db-header-pill ${dbHealth?.allTablesReady ? "ready" : "warning"}`}
+          onClick={() => setDbModalOpen(true)}
+          title="Bấm để kiểm tra và khởi tạo Database Supabase"
+        >
+          <span className="db-dot" />
+          <span>
+            {dbHealth?.allTablesReady
+              ? "Supabase: Dữ liệu thật"
+              : dbChecking
+              ? "Đang kiểm tra DB..."
+              : "Supabase: Cần khởi tạo"}
+          </span>
+        </div>
+
         <div className="clocks-container" suppressHydrationWarning>
           <div className="clk-box" suppressHydrationWarning>
             <b suppressHydrationWarning>{mounted ? clocks.nyTxt : "--:--:--"}</b>
@@ -874,7 +1008,41 @@ export default function Home() {
 
           {/* Accounts Grid */}
           <div className="acc-grid">
-            {accounts.map((acc) => {
+            {accounts.length === 0 ? (
+              <div
+                style={{
+                  gridColumn: "1 / -1",
+                  padding: "48px 24px",
+                  textAlign: "center",
+                  background: "var(--s1)",
+                  borderRadius: "var(--radius-lg)",
+                  border: "1px dashed var(--line)",
+                }}
+              >
+                <div style={{ fontSize: "16px", fontWeight: 700, color: "var(--tx)", marginBottom: "8px" }}>
+                  Chưa có tài khoản quỹ nào
+                </div>
+                <p style={{ color: "var(--mut)", fontSize: "13px", maxWidth: "520px", margin: "0 auto 20px" }}>
+                  Tài khoản của Nickname <b>{activeUser.nickname}</b> chưa có dữ liệu tài khoản quỹ nào trong Database thật. Hãy khởi tạo tài khoản đầu tiên để bắt đầu theo dõi MLL, MDL và Target.
+                </p>
+                <div style={{ display: "flex", gap: "10px", justifyContent: "center", flexWrap: "wrap" }}>
+                  <button
+                    className="btn primary"
+                    onClick={() => {
+                      setEditingAccountId(null);
+                      handleSelectPreset(0);
+                      setAccModalOpen(true);
+                    }}
+                  >
+                    + Thêm tài khoản quỹ
+                  </button>
+                  <button className="btn" onClick={() => setDbModalOpen(true)}>
+                    Khởi tạo từ Database Setup
+                  </button>
+                </div>
+              </div>
+            ) : (
+              accounts.map((acc) => {
               const isActive = acc.id === activeAccountId;
               const accTradesList = trades.filter((t) => !t.accountId || t.accountId === acc.id);
               const netPnl = accTradesList.reduce((a, b) => a + b.pnl, 0);
@@ -1100,7 +1268,7 @@ export default function Home() {
                   </div>
                 </div>
               );
-            })}
+            }))}
           </div>
         </div>
       )}
@@ -2358,6 +2526,260 @@ export default function Home() {
               >
                 Đăng nhập / Tiếp tục
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* SUPABASE DATABASE ONBOARDING & SETUP MODAL */}
+      {dbModalOpen && (
+        <div
+          className="modal-overlay"
+          onMouseDown={handleOverlayMouseDown}
+          onClick={handleOverlayClick(() => setDbModalOpen(false))}
+        >
+          <div
+            className="modal-content"
+            style={{ maxWidth: "680px", maxHeight: "90vh", overflowY: "auto" }}
+            onMouseDown={(e) => e.stopPropagation()}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                <span className={`db-header-pill ${dbHealth?.allTablesReady ? "ready" : "warning"}`} style={{ padding: "4px 10px" }}>
+                  <span className="db-dot" />
+                  <span>{dbHealth?.allTablesReady ? "Dữ liệu thật đã sẵn sàng" : "Yêu cầu khởi tạo Database"}</span>
+                </span>
+                <h2 style={{ margin: 0, fontSize: "18px" }}>Cơ sở dữ liệu Supabase</h2>
+              </div>
+              <button className="btn" onClick={() => setDbModalOpen(false)}>Đóng</button>
+            </div>
+
+            {/* Health status banner */}
+            {dbHealth?.allTablesReady ? (
+              <div
+                style={{
+                  background: "rgba(34, 197, 94, 0.1)",
+                  border: "1px solid rgba(34, 197, 94, 0.3)",
+                  borderRadius: "var(--radius-md)",
+                  padding: "14px 16px",
+                  marginBottom: "20px",
+                  fontSize: "13px",
+                  color: "var(--tx)",
+                }}
+              >
+                <div style={{ fontWeight: 700, color: "#22c55e", marginBottom: "4px" }}>
+                  Kết nối thành công! Hệ thống đang hoạt động với CSDL thật.
+                </div>
+                <div style={{ color: "var(--mut)", fontSize: "12px" }}>
+                  Tất cả 4 bảng (`users`, `accounts`, `trades`, `user_config`) đã được đồng bộ.
+                  Hiện có <b>{dbHealth.userCount}</b> Trader, <b>{dbHealth.accountCount}</b> Tài khoản quỹ lưu trên Supabase.
+                </div>
+              </div>
+            ) : (
+              <div
+                style={{
+                  background: "rgba(245, 158, 11, 0.1)",
+                  border: "1px solid rgba(245, 158, 11, 0.3)",
+                  borderRadius: "var(--radius-md)",
+                  padding: "14px 16px",
+                  marginBottom: "20px",
+                  fontSize: "13px",
+                  color: "var(--tx)",
+                }}
+              >
+                <div style={{ fontWeight: 700, color: "#f59e0b", marginBottom: "4px" }}>
+                  Hệ thống yêu cầu khởi tạo CSDL thật trước khi sử dụng và vào lệnh.
+                </div>
+                <div style={{ color: "var(--mut)", fontSize: "12px" }}>
+                  {dbHealth?.error ||
+                    (dbHealth?.missingTables && dbHealth.missingTables.length > 0
+                      ? `Thiếu các bảng: ${dbHealth.missingTables.join(", ")} trong CSDL Supabase.`
+                      : "Chưa hoàn tất các bảng dữ liệu.")}
+                </div>
+              </div>
+            )}
+
+            {/* Section 1: Supabase Credentials */}
+            <div style={{ marginBottom: "20px" }}>
+              <div style={{ fontSize: "14px", fontWeight: 700, marginBottom: "8px", color: "var(--tx)" }}>
+                1. Thông tin kết nối Supabase
+              </div>
+              <div style={{ display: "grid", gap: "10px", gridTemplateColumns: "1fr" }}>
+                <div>
+                  <label>Supabase Project URL</label>
+                  <input
+                    value={sbUrlInput}
+                    onChange={(e) => setSbUrlInput(e.target.value.trim())}
+                    placeholder="https://xxxxxxxxxxxx.supabase.co"
+                  />
+                </div>
+                <div>
+                  <label>Supabase Anon Public API Key</label>
+                  <input
+                    type="password"
+                    value={sbKeyInput}
+                    onChange={(e) => setSbKeyInput(e.target.value.trim())}
+                    placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+                  />
+                </div>
+              </div>
+              <div style={{ display: "flex", justifyContent: "flex-end", marginTop: "10px" }}>
+                <button
+                  className="btn"
+                  onClick={handleTestAndSaveDb}
+                  disabled={dbChecking}
+                  style={{ display: "flex", alignItems: "center", gap: "6px" }}
+                >
+                  {dbChecking ? "Đang kiểm tra kết nối..." : "Lưu & Kiểm tra kết nối lại"}
+                </button>
+              </div>
+            </div>
+
+            {/* Section 2: Tables Status Grid */}
+            <div style={{ marginBottom: "20px" }}>
+              <div style={{ fontSize: "14px", fontWeight: 700, marginBottom: "8px", color: "var(--tx)" }}>
+                2. Trạng thái các bảng dữ liệu
+              </div>
+              <div className="table-status-grid">
+                <div className={`table-status-item ${dbHealth?.tables.users ? "ok" : "missing"}`}>
+                  <div>
+                    <b style={{ display: "block", fontSize: "13px" }}>users</b>
+                    <small style={{ color: "var(--mut)" }}>Quản lý Nickname trader</small>
+                  </div>
+                  <span className={`badge-tag ${dbHealth?.tables.users ? "badge-funded" : "badge-eval"}`}>
+                    {dbHealth?.tables.users ? "Đã sẵn sàng" : "Thiếu bảng"}
+                  </span>
+                </div>
+                <div className={`table-status-item ${dbHealth?.tables.accounts ? "ok" : "missing"}`}>
+                  <div>
+                    <b style={{ display: "block", fontSize: "13px" }}>accounts</b>
+                    <small style={{ color: "var(--mut)" }}>Tài khoản quỹ, MLL, MDL</small>
+                  </div>
+                  <span className={`badge-tag ${dbHealth?.tables.accounts ? "badge-funded" : "badge-eval"}`}>
+                    {dbHealth?.tables.accounts ? "Đã sẵn sàng" : "Thiếu bảng"}
+                  </span>
+                </div>
+                <div className={`table-status-item ${dbHealth?.tables.trades ? "ok" : "missing"}`}>
+                  <div>
+                    <b style={{ display: "block", fontSize: "13px" }}>trades</b>
+                    <small style={{ color: "var(--mut)" }}>Nhật ký lệnh & P&L</small>
+                  </div>
+                  <span className={`badge-tag ${dbHealth?.tables.trades ? "badge-funded" : "badge-eval"}`}>
+                    {dbHealth?.tables.trades ? "Đã sẵn sàng" : "Thiếu bảng"}
+                  </span>
+                </div>
+                <div className={`table-status-item ${dbHealth?.tables.user_config ? "ok" : "missing"}`}>
+                  <div>
+                    <b style={{ display: "block", fontSize: "13px" }}>user_config</b>
+                    <small style={{ color: "var(--mut)" }}>Kỷ luật & cài đặt cá nhân</small>
+                  </div>
+                  <span className={`badge-tag ${dbHealth?.tables.user_config ? "badge-funded" : "badge-eval"}`}>
+                    {dbHealth?.tables.user_config ? "Đã sẵn sàng" : "Thiếu bảng"}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {/* Section 3: Missing Schema Setup Instructions */}
+            {(!dbHealth?.allTablesReady || (dbHealth?.missingTables && dbHealth.missingTables.length > 0)) && (
+              <div
+                style={{
+                  background: "var(--s1)",
+                  border: "1px solid var(--line)",
+                  borderRadius: "var(--radius-md)",
+                  padding: "16px",
+                  marginBottom: "20px",
+                }}
+              >
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "10px", flexWrap: "wrap", gap: "8px" }}>
+                  <div style={{ fontWeight: 700, color: "var(--acc)", fontSize: "13px" }}>
+                    Khởi tạo CSDL: Chạy kịch bản SQL trong Supabase
+                  </div>
+                  <button
+                    className="btn primary"
+                    onClick={() => {
+                      navigator.clipboard.writeText(SQL_SCHEMA_SCRIPT);
+                      setCopiedSql(true);
+                      setTimeout(() => setCopiedSql(false), 3000);
+                    }}
+                    style={{ fontSize: "12px", padding: "6px 12px" }}
+                  >
+                    {copiedSql ? "Đã sao chép vào bộ nhớ!" : "Sao chép toàn bộ mã SQL"}
+                  </button>
+                </div>
+                <ol style={{ fontSize: "12px", color: "var(--tx)", paddingLeft: "18px", margin: "0 0 12px", lineHeight: "1.6" }}>
+                  <li>
+                    Truy cập trang quản trị <a href="https://supabase.com/dashboard" target="_blank" rel="noreferrer" style={{ color: "var(--blue)", textDecoration: "underline" }}>Supabase Dashboard</a> và mở Project của bạn.
+                  </li>
+                  <li>
+                    Nhấp vào mục <b>SQL Editor</b> trên thanh điều hướng bên trái, sau đó bấm <b>New query</b>.
+                  </li>
+                  <li>
+                    Bấm <b>Sao chép toàn bộ mã SQL</b> ở trên, dán (Ctrl+V) vào ô soạn thảo và bấm nút <b>RUN</b> (phím tắt Ctrl+Enter).
+                  </li>
+                  <li>
+                    Sau khi Supabase báo <i>Success</i>, quay lại đây và bấm nút <b>"Lưu & Kiểm tra kết nối lại"</b> ở trên.
+                  </li>
+                </ol>
+                <div className="sql-code-box">
+                  {SQL_SCHEMA_SCRIPT}
+                </div>
+              </div>
+            )}
+
+            {/* Section 4: Initial Seeding (Trader Nickname & First Account) */}
+            {dbHealth?.allTablesReady && (
+              <div
+                style={{
+                  background: "var(--s2)",
+                  border: "1px solid var(--line)",
+                  borderRadius: "var(--radius-md)",
+                  padding: "16px",
+                  marginBottom: "20px",
+                }}
+              >
+                <div style={{ fontWeight: 700, fontSize: "14px", marginBottom: "12px", color: "var(--tx)" }}>
+                  Khởi tạo Trader & Tài khoản quỹ đầu tiên
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px", marginBottom: "14px" }}>
+                  <div>
+                    <label>Nickname Trader của bạn</label>
+                    <input
+                      value={initNickInput}
+                      onChange={(e) => setInitNickInput(e.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, ""))}
+                      placeholder="Ví dụ: thien_ict"
+                    />
+                  </div>
+                  <div>
+                    <label>Gói quỹ ban đầu</label>
+                    <select
+                      value={initPresetIdx}
+                      onChange={(e) => setInitPresetIdx(Number(e.target.value))}
+                    >
+                      {PROP_PRESETS.map((p, idx) => (
+                        <option key={idx} value={idx}>
+                          {p.label} - ${p.balance.toLocaleString()} ({p.type.toUpperCase()})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+                <div style={{ display: "flex", justifyContent: "flex-end" }}>
+                  <button className="btn primary" onClick={handleCompleteDbSetup}>
+                    Khởi tạo dữ liệu thật & Bắt đầu giao dịch
+                  </button>
+                </div>
+              </div>
+            )}
+
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: "10px" }}>
+              <button className="btn" onClick={() => setDbModalOpen(false)}>Đóng</button>
+              {dbHealth?.allTablesReady && (
+                <button className="btn primary" onClick={() => setDbModalOpen(false)}>
+                  Hoàn tất & Tiếp tục
+                </button>
+              )}
             </div>
           </div>
         </div>

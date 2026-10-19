@@ -187,3 +187,5 @@ VALUES
 )
 ON CONFLICT (id) DO NOTHING;
 
+-- 7. Làm mới bộ nhớ đệm PostgREST Schema Cache để nhận diện ngay các bảng mới
+NOTIFY pgrst, 'reload schema';

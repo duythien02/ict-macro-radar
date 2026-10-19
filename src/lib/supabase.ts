@@ -27,17 +27,142 @@ export function getSupabase(customUrl?: string, customKey?: string): SupabaseCli
   }
 }
 
-export async function testSupabaseConnection(url: string, key: string): Promise<{ success: boolean; message: string }> {
+export interface DatabaseHealthStatus {
+  connected: boolean;
+  url: string;
+  anonKey: string;
+  isConfigured: boolean;
+  tables: {
+    users: boolean;
+    accounts: boolean;
+    trades: boolean;
+    user_config: boolean;
+  };
+  allTablesReady: boolean;
+  hasUsers: boolean;
+  hasAccounts: boolean;
+  userCount: number;
+  accountCount: number;
+  missingTables: string[];
+  error?: string;
+}
+
+export function saveSupabaseCredentials(url: string, key: string) {
+  if (typeof window !== "undefined") {
+    localStorage.setItem("ict_sb_url", url.trim());
+    localStorage.setItem("ict_sb_key", key.trim());
+  }
+  cachedClient = null;
+  cachedUrl = "";
+  cachedKey = "";
+}
+
+export async function checkDatabaseHealth(customUrl?: string, customKey?: string): Promise<DatabaseHealthStatus> {
+  const url = customUrl || (typeof window !== "undefined" ? localStorage.getItem("ict_sb_url") : null) || process.env.NEXT_PUBLIC_SUPABASE_URL || "";
+  const key = customKey || (typeof window !== "undefined" ? localStorage.getItem("ict_sb_key") : null) || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
+
+  if (!url || !key) {
+    return {
+      connected: false,
+      url: "",
+      anonKey: "",
+      isConfigured: false,
+      tables: { users: false, accounts: false, trades: false, user_config: false },
+      allTablesReady: false,
+      hasUsers: false,
+      hasAccounts: false,
+      userCount: 0,
+      accountCount: 0,
+      missingTables: ["users", "accounts", "trades", "user_config"],
+      error: "Chưa cấu hình URL hoặc Anon Key của Supabase.",
+    };
+  }
+
   try {
     const client = createClient(url, key);
-    const { error } = await client.from("accounts").select("id").limit(1);
-    if (error) {
-      if (error.code === "PGRST204" || error.code === "42P01") {
-        return { success: false, message: "Kết nối thành công nhưng chưa tạo bảng 'accounts'. Hãy chạy file supabase_schema.sql!" };
+    const tables = ["users", "accounts", "trades", "user_config"] as const;
+    const tablesStatus = { users: false, accounts: false, trades: false, user_config: false };
+    const missing: string[] = [];
+    let firstError: string | undefined;
+
+    for (const t of tables) {
+      const { error } = await client.from(t).select("*", { count: "exact", head: true });
+      if (error) {
+        if (["PGRST205", "42P01", "PGRST204"].includes(error.code)) {
+          tablesStatus[t] = false;
+          missing.push(t);
+        } else {
+          tablesStatus[t] = false;
+          missing.push(t);
+          if (!firstError) firstError = `[${t}] ${error.message}`;
+        }
+      } else {
+        tablesStatus[t] = true;
       }
-      return { success: false, message: `Lỗi: ${error.message}` };
     }
-    return { success: true, message: "Kết nối Supabase thành công! Dữ liệu đã sẵn sàng." };
+
+    let userCount = 0;
+    let accountCount = 0;
+    if (tablesStatus.users) {
+      const { count } = await client.from("users").select("*", { count: "exact", head: true });
+      userCount = count || 0;
+    }
+    if (tablesStatus.accounts) {
+      const { count } = await client.from("accounts").select("*", { count: "exact", head: true });
+      accountCount = count || 0;
+    }
+
+    const allReady = missing.length === 0;
+
+    return {
+      connected: true,
+      url,
+      anonKey: key,
+      isConfigured: true,
+      tables: tablesStatus,
+      allTablesReady: allReady,
+      hasUsers: userCount > 0,
+      hasAccounts: accountCount > 0,
+      userCount,
+      accountCount,
+      missingTables: missing,
+      error: firstError,
+    };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return {
+      connected: false,
+      url,
+      anonKey: key,
+      isConfigured: true,
+      tables: { users: false, accounts: false, trades: false, user_config: false },
+      allTablesReady: false,
+      hasUsers: false,
+      hasAccounts: false,
+      userCount: 0,
+      accountCount: 0,
+      missingTables: ["users", "accounts", "trades", "user_config"],
+      error: msg,
+    };
+  }
+}
+
+export async function testSupabaseConnection(url: string, key: string): Promise<{ success: boolean; message: string }> {
+  try {
+    const health = await checkDatabaseHealth(url, key);
+    if (!health.connected) {
+      return { success: false, message: health.error || "Không thể kết nối tới Supabase URL!" };
+    }
+    if (!health.allTablesReady) {
+      return {
+        success: false,
+        message: `Kết nối thành công nhưng thiếu các bảng: ${health.missingTables.join(", ")}. Hãy chạy file supabase_schema.sql trong Supabase SQL Editor!`,
+      };
+    }
+    return {
+      success: true,
+      message: `Kết nối Supabase thành công 100%! Đã sẵn sàng tất cả các bảng: users (${health.userCount}), accounts (${health.accountCount}), trades, user_config.`,
+    };
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
     return { success: false, message: `Lỗi kết nối: ${msg}` };
