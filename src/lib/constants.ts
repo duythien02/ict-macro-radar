@@ -52,6 +52,9 @@ export const DEFAULT_ACCOUNTS: PropAccount[] = [
     target: 3000,
     status: "eval",
     consistencyPct: 50,
+    riskPct: 0.5,
+    maxTradesDaily: 3,
+    maxLossRDaily: 2,
   },
   {
     id: "acc_the5ers_100k",
@@ -65,6 +68,9 @@ export const DEFAULT_ACCOUNTS: PropAccount[] = [
     target: 8000,
     status: "eval",
     currentPhase: 1,
+    riskPct: 0.5,
+    maxTradesDaily: 3,
+    maxLossRDaily: 2,
     cfdPhases: [
       { phase: 1, name: "Vòng 1 (Challenge)", targetPct: 8, mdlPct: 5, mllPct: 10 },
       { phase: 2, name: "Vòng 2 (Verification)", targetPct: 5, mdlPct: 5, mllPct: 10 },
@@ -83,6 +89,9 @@ export const DEFAULT_ACCOUNTS: PropAccount[] = [
     target: 3000,
     status: "funded",
     consistencyPct: 40,
+    riskPct: 0.5,
+    maxTradesDaily: 3,
+    maxLossRDaily: 2,
   },
 ];
 
@@ -96,6 +105,9 @@ export const PROP_PRESETS = [
     mdl: 1000,
     target: 3000,
     consistency: 50,
+    riskPct: 0.5,
+    maxTradesDaily: 3,
+    maxLossRDaily: 2,
   },
   {
     firm: "topstep" as const,
@@ -106,6 +118,9 @@ export const PROP_PRESETS = [
     mdl: 2000,
     target: 6000,
     consistency: 50,
+    riskPct: 0.5,
+    maxTradesDaily: 3,
+    maxLossRDaily: 2,
   },
   {
     firm: "topstep" as const,
@@ -116,6 +131,9 @@ export const PROP_PRESETS = [
     mdl: 3000,
     target: 9000,
     consistency: 50,
+    riskPct: 0.5,
+    maxTradesDaily: 3,
+    maxLossRDaily: 2,
   },
   {
     firm: "bulenox" as const,
@@ -126,6 +144,9 @@ export const PROP_PRESETS = [
     mdl: 1000,
     target: 1500,
     consistency: 40,
+    riskPct: 0.5,
+    maxTradesDaily: 3,
+    maxLossRDaily: 2,
   },
   {
     firm: "bulenox" as const,
@@ -136,6 +157,9 @@ export const PROP_PRESETS = [
     mdl: 1500,
     target: 3000,
     consistency: 40,
+    riskPct: 0.5,
+    maxTradesDaily: 3,
+    maxLossRDaily: 2,
   },
   {
     firm: "bulenox" as const,
@@ -146,6 +170,9 @@ export const PROP_PRESETS = [
     mdl: 2000,
     target: 6000,
     consistency: 40,
+    riskPct: 0.5,
+    maxTradesDaily: 3,
+    maxLossRDaily: 2,
   },
   {
     firm: "the5ers" as const,
@@ -155,6 +182,9 @@ export const PROP_PRESETS = [
     mll: 6000,
     mdl: 3000,
     target: 4800,
+    riskPct: 0.5,
+    maxTradesDaily: 3,
+    maxLossRDaily: 2,
     phases: [
       { phase: 1, name: "Vòng 1 (Challenge)", targetPct: 8, mdlPct: 5, mllPct: 10 },
       { phase: 2, name: "Vòng 2 (Verification)", targetPct: 5, mdlPct: 5, mllPct: 10 },
@@ -169,6 +199,9 @@ export const PROP_PRESETS = [
     mll: 10000,
     mdl: 5000,
     target: 8000,
+    riskPct: 0.5,
+    maxTradesDaily: 3,
+    maxLossRDaily: 2,
     phases: [
       { phase: 1, name: "Vòng 1 (Challenge)", targetPct: 8, mdlPct: 5, mllPct: 10 },
       { phase: 2, name: "Vòng 2 (Verification)", targetPct: 5, mdlPct: 5, mllPct: 10 },

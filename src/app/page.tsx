@@ -49,6 +49,9 @@ export default function Home() {
     target: 3000,
     status: "eval" as AccountStatus,
     consistencyPct: 50,
+    riskPct: 0.5,
+    maxTradesDaily: 3,
+    maxLossRDaily: 2,
     currentPhase: 1,
     cfdPhases: [
       { phase: 1, name: "Vòng 1 (Challenge)", targetPct: 8, mdlPct: 5, mllPct: 10 },
@@ -231,12 +234,23 @@ export default function Home() {
   const todayPnl = useMemo(() => todayTrades.reduce((a, x) => a + x.pnl, 0), [todayTrades]);
   const todayR = useMemo(() => todayTrades.reduce((a, x) => a + x.r, 0), [todayTrades]);
 
-  // Limits
+  // Limits & Risk Rules based on active account
   const activeMdl = activeAcc ? activeAcc.mdl : (cfg.maxL * cfg.bal * 0.01);
   const activeMll = activeAcc ? activeAcc.mll : 2000;
+  const activeMaxTrades = activeAcc?.maxTradesDaily ?? cfg.maxT ?? 3;
+  const activeMaxLossR = activeAcc?.maxLossRDaily ?? cfg.maxL ?? 2;
+  const activeRiskPct = activeAcc?.riskPct ?? cfg.risk ?? 0.5;
+
   const isDailyBreached = todayPnl <= -activeMdl;
   const isMllBreached = activeAccNetPnl <= -activeMll;
-  const isLocked = todayTrades.length >= cfg.maxT || todayR <= -cfg.maxL || isDailyBreached || isMllBreached;
+  const isTradeLimitReached = todayTrades.length >= activeMaxTrades;
+  const isLossRReached = todayR <= -activeMaxLossR;
+  const isLocked = isTradeLimitReached || isLossRReached || isDailyBreached || isMllBreached;
+
+  // Checklist Validation Status
+  const chkScore = useMemo(() => Math.round((chk.filter(Boolean).length / CHK.length) * 100), [chk]);
+  const chkMissingRequired = useMemo(() => CHK.filter((x, i) => x.required && !chk[i]), [chk]);
+  const isChecklistPassed = useMemo(() => chkScore >= 80 && chkMissingRequired.length === 0, [chkScore, chkMissingRequired]);
 
   // Toggle Theme
   const toggleTheme = () => {
@@ -297,6 +311,9 @@ export default function Home() {
       target: p.target,
       status: "eval",
       consistencyPct: p.consistency || 50,
+      riskPct: p.riskPct || 0.5,
+      maxTradesDaily: p.maxTradesDaily || 3,
+      maxLossRDaily: p.maxLossRDaily || 2,
       currentPhase: 1,
       cfdPhases: p.phases || [
         { phase: 1, name: "Vòng 1 (Challenge)", targetPct: 8, mdlPct: 5, mllPct: 10 },
@@ -348,6 +365,9 @@ export default function Home() {
       target: Number(accForm.target) || 3000,
       status: accForm.status,
       consistencyPct: Number(accForm.consistencyPct) || 50,
+      riskPct: Number(accForm.riskPct) || 0.5,
+      maxTradesDaily: Number(accForm.maxTradesDaily) || 3,
+      maxLossRDaily: Number(accForm.maxLossRDaily) || 2,
       currentPhase: Number(accForm.currentPhase) || 1,
       cfdPhases: accForm.accountType === "cfd" ? accForm.cfdPhases : [],
     };
@@ -363,6 +383,46 @@ export default function Home() {
     await insertAccount(newAcc);
     setAccModalOpen(false);
     setEditingAccountId(null);
+  };
+
+  // Attempt New Trade Handler - Centralized Guard for ALL Entry Buttons
+  const handleAttemptNewTrade = (sessionId?: string) => {
+    // 1. Kiểm tra khóa lệnh do chạm giới hạn rủi ro / tài khoản
+    if (isLocked) {
+      let reason = "TÀI KHOẢN ĐANG BỊ KHÓA LỆNH:\n";
+      if (isMllBreached) reason += `• Đã chạm mức lỗ tối đa tài khoản MLL (-$${activeMll.toLocaleString()})!\n`;
+      if (isDailyBreached) reason += `• Đã chạm mức lỗ tối đa trong ngày MDL (-$${activeMdl.toLocaleString()})!\n`;
+      if (isTradeLimitReached) reason += `• Đã đạt số lệnh tối đa cho phép trong ngày (${todayTrades.length}/${activeMaxTrades} lệnh)!\n`;
+      if (isLossRReached) reason += `• Đã chạm mức lỗ tối đa trong ngày (${todayR.toFixed(1)}R / -${activeMaxLossR}R)!\n`;
+      reason += "\nHãy bảo toàn vốn và nghỉ ngơi hôm nay!";
+      alert(reason);
+      setTab("check");
+      return;
+    }
+
+    // 2. Bắt buộc kiểm tra trạng thái Checklist ICT
+    if (!isChecklistPassed) {
+      let msg = "CHƯA ĐẠT CHUẨN CHECKLIST VÀO LỆNH!\n\n";
+      msg += `• Điểm checklist: ${chkScore}% (Yêu cầu tối thiểu: 80%)\n`;
+      if (chkMissingRequired.length > 0) {
+        msg += `• Các tiêu chí bắt buộc còn thiếu:\n`;
+        chkMissingRequired.forEach((item) => {
+          msg += `   - ${item.title}\n`;
+        });
+      }
+      msg += "\nHệ thống tự động chuyển bạn sang tab 'Checklist & Kỷ luật' để rà soát trước khi vào lệnh.";
+      alert(msg);
+      setTab("check");
+      return;
+    }
+
+    // 3. Đã đủ điều kiện an toàn: Mở form ghi lệnh
+    setTradeForm((f) => ({
+      ...f,
+      sess: sessionId || f.sess,
+      disc: true,
+    }));
+    setDlgOpen(true);
   };
 
   // Delete Account
@@ -647,10 +707,7 @@ export default function Home() {
               </div>
               <button
                 className="btn primary"
-                onClick={() => {
-                  setTradeForm((f) => ({ ...f, sess: curSess.id, disc: true }));
-                  setDlgOpen(true);
-                }}
+                onClick={() => handleAttemptNewTrade(curSess.id)}
               >
                 + Ghi lệnh Macro
               </button>
@@ -731,10 +788,7 @@ export default function Home() {
                         <td>
                           <button
                             className={`btn ${x.k ? "primary" : ""}`}
-                            onClick={() => {
-                              setTradeForm((f) => ({ ...f, sess: x.id, disc: true }));
-                              setDlgOpen(true);
-                            }}
+                            onClick={() => handleAttemptNewTrade(x.id)}
                           >
                             + Ghi lệnh
                           </button>
@@ -864,6 +918,13 @@ export default function Home() {
                         {netPnl >= 0 ? "+" : ""}${netPnl.toFixed(0)} ({pnlPct >= 0 ? "+" : ""}{pnlPct.toFixed(1)}%)
                       </b>
                     </div>
+                  </div>
+
+                  {/* Account Discipline & Risk Settings Badge */}
+                  <div style={{ background: "var(--s2)", padding: "6px 10px", borderRadius: "var(--radius-sm)", marginBottom: "12px", border: "1px solid var(--line)", fontSize: "11px", color: "var(--tx)", display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: "4px" }}>
+                    <span><b>Rủi ro:</b> {acc.riskPct || 0.5}%/lệnh (${(((acc.balance || 50000) * (acc.riskPct || 0.5)) / 100).toFixed(0)})</span>
+                    <span><b>Tối đa:</b> {acc.maxTradesDaily || 3} lệnh/ngày</span>
+                    <span><b>Max lỗ:</b> {acc.maxLossRDaily || 2}R/ngày</span>
                   </div>
 
                   {/* Progress Bars */}
@@ -999,6 +1060,9 @@ export default function Home() {
                             target: acc.target,
                             status: acc.status,
                             consistencyPct: acc.consistencyPct ?? 50,
+                            riskPct: acc.riskPct ?? 0.5,
+                            maxTradesDaily: acc.maxTradesDaily ?? 3,
+                            maxLossRDaily: acc.maxLossRDaily ?? 2,
                             currentPhase: acc.currentPhase ?? 1,
                             cfdPhases: acc.cfdPhases && acc.cfdPhases.length > 0 ? acc.cfdPhases : [
                               { phase: 1, name: "Vòng 1 (Challenge)", targetPct: 8, mdlPct: 5, mllPct: 10 },
@@ -1032,13 +1096,13 @@ export default function Home() {
           <div className="grid4">
             <div className="stat-card">
               <span>Lệnh đã vào hôm nay</span>
-              <b>{todayTrades.length} / {cfg.maxT}</b>
-              <small>Còn {Math.max(0, cfg.maxT - todayTrades.length)} lệnh cho phép</small>
+              <b>{todayTrades.length} / {activeMaxTrades}</b>
+              <small>Còn {Math.max(0, activeMaxTrades - todayTrades.length)} lệnh cho phép</small>
             </div>
             <div className="stat-card">
               <span>Tài khoản ({activeAcc?.propFirm.toUpperCase()})</span>
               <b style={{ fontSize: 16 }}>{activeAcc?.name || "Mặc định"}</b>
-              <small>Vốn: ${(activeAcc?.balance || cfg.bal).toLocaleString()}</small>
+              <small>Vốn: ${(activeAcc?.balance || cfg.bal).toLocaleString()} · Rủi ro {activeRiskPct}%</small>
             </div>
             <div className="stat-card">
               <span>Lỗ tối đa ngày (MDL)</span>
@@ -1054,8 +1118,10 @@ export default function Home() {
                   ? "Chạm MDL ngày!"
                   : isMllBreached
                   ? "Chạm MLL quỹ!"
-                  : isLocked
-                  ? "Đã khóa lệnh"
+                  : isTradeLimitReached
+                  ? "Đạt giới hạn lệnh!"
+                  : isLossRReached
+                  ? "Chạm mức lỗ R!"
                   : "Sẵn sàng"}
               </b>
               <small>{isLocked ? "Đạt giới hạn rủi ro" : "Tuân thủ kỷ luật"}</small>
@@ -1063,9 +1129,28 @@ export default function Home() {
           </div>
 
           <div className="panel">
-            <h2>Checklist ICT trước khi vào lệnh</h2>
-            <div className="sub-title" style={{ marginBottom: "16px" }}>
-              Cần đạt tối thiểu 80% và hoàn thành toàn bộ các tiêu chí bắt buộc.
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: "10px", marginBottom: "16px" }}>
+              <div>
+                <h2>Checklist ICT trước khi vào lệnh</h2>
+                <div className="sub-title">
+                  Tất cả các nút vào lệnh trong hệ thống đều tự động kiểm tra checklist này. Cần đạt tối thiểu 80% và hoàn thành đủ các tiêu chí bắt buộc.
+                </div>
+              </div>
+              <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+                <span
+                  className="tag"
+                  style={{
+                    padding: "6px 12px",
+                    fontWeight: 700,
+                    fontSize: "12px",
+                    background: isChecklistPassed ? "var(--up-bg)" : "var(--dn-bg)",
+                    color: isChecklistPassed ? "var(--up)" : "var(--dn)",
+                    border: `1px solid ${isChecklistPassed ? "var(--up)" : "var(--dn)"}`,
+                  }}
+                >
+                  {isChecklistPassed ? `ĐẠT CHUẨN (${chkScore}%) · SẴN SÀNG VÀO LỆNH` : `CHƯA ĐẠT (${chkScore}%) · ĐANG BẢO VỆ LỆNH`}
+                </span>
+              </div>
             </div>
 
             {CHK.map((item, idx) => (
@@ -1110,15 +1195,8 @@ export default function Home() {
               </button>
               <button
                 className="btn primary"
-                disabled={
-                  isLocked ||
-                  Math.round(chk.filter(Boolean).length / CHK.length * 100) < 80 ||
-                  !CHK.every((x, i) => !x.required || chk[i])
-                }
-                onClick={() => {
-                  setTradeForm((f) => ({ ...f, disc: true }));
-                  setDlgOpen(true);
-                }}
+                disabled={isLocked || !isChecklistPassed}
+                onClick={() => handleAttemptNewTrade()}
               >
                 Đạt chuẩn: Ghi lệnh ngay
               </button>
@@ -1155,7 +1233,7 @@ export default function Home() {
                   </option>
                 ))}
               </select>
-              <button className="btn primary" onClick={() => setDlgOpen(true)}>
+              <button className="btn primary" onClick={() => handleAttemptNewTrade()}>
                 + Thêm lệnh mới
               </button>
             </div>
@@ -1530,16 +1608,65 @@ export default function Home() {
       {/* TAB 5: CONFIG & SUPABASE */}
       {tab === "cfg" && (
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: "20px" }}>
-          {/* Risk settings */}
+          {/* Risk settings - Per Prop Account */}
           <div className="panel">
-            <h2>Quản lý rủi ro & Tài khoản</h2>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6, flexWrap: "wrap", gap: 8 }}>
+              <h2>Quản lý rủi ro & Tài khoản quỹ</h2>
+              {activeAcc && (
+                <button
+                  className="btn"
+                  style={{ fontSize: 12, padding: "4px 10px" }}
+                  onClick={() => {
+                    setEditingAccountId(activeAcc.id);
+                    setAccForm({
+                      name: activeAcc.name,
+                      propFirm: activeAcc.propFirm,
+                      accountType: activeAcc.accountType,
+                      balance: activeAcc.balance,
+                      currentBalance: activeAcc.currentBalance ?? activeAcc.balance,
+                      mll: activeAcc.mll,
+                      mdl: activeAcc.mdl,
+                      target: activeAcc.target,
+                      status: activeAcc.status,
+                      consistencyPct: activeAcc.consistencyPct ?? 50,
+                      riskPct: activeAcc.riskPct ?? 0.5,
+                      maxTradesDaily: activeAcc.maxTradesDaily ?? 3,
+                      maxLossRDaily: activeAcc.maxLossRDaily ?? 2,
+                      currentPhase: activeAcc.currentPhase ?? 1,
+                      cfdPhases: activeAcc.cfdPhases && activeAcc.cfdPhases.length > 0 ? activeAcc.cfdPhases : [
+                        { phase: 1, name: "Vòng 1 (Challenge)", targetPct: 8, mdlPct: 5, mllPct: 10 },
+                        { phase: 2, name: "Vòng 2 (Verification)", targetPct: 5, mdlPct: 5, mllPct: 10 },
+                        { phase: 3, name: "Funded Live", targetPct: 0, mdlPct: 5, mllPct: 10 },
+                      ],
+                    });
+                    setAccModalOpen(true);
+                  }}
+                >
+                  Sửa trong modal tài khoản
+                </button>
+              )}
+            </div>
+            <div className="sub-title">
+              {activeAcc
+                ? `Quy tắc rủi ro của tài khoản đang chọn: ${activeAcc.name} (${activeAcc.propFirm.toUpperCase()} - ${activeAcc.accountType.toUpperCase()})`
+                : "Mỗi tài khoản quỹ được cấu hình riêng mức rủi ro, số lệnh và mức dừng lỗ tối đa."}
+            </div>
+
             <div style={{ display: "flex", flexDirection: "column", gap: "12px", marginTop: "16px" }}>
               <div>
                 <label>Số dư ban đầu ($)</label>
                 <input
                   type="number"
-                  value={cfg.bal}
-                  onChange={(e) => setCfg({ ...cfg, bal: Number(e.target.value) || 50000 })}
+                  value={activeAcc ? activeAcc.balance : cfg.bal}
+                  onChange={(e) => {
+                    const val = Number(e.target.value) || 0;
+                    if (activeAcc) {
+                      const updatedAcc = { ...activeAcc, balance: val };
+                      setAccounts((prev) => prev.map((a) => (a.id === activeAcc.id ? updatedAcc : a)));
+                    } else {
+                      setCfg({ ...cfg, bal: val });
+                    }
+                  }}
                 />
               </div>
               <div>
@@ -1547,16 +1674,32 @@ export default function Home() {
                 <input
                   type="number"
                   step="0.1"
-                  value={cfg.risk}
-                  onChange={(e) => setCfg({ ...cfg, risk: Number(e.target.value) || 0.5 })}
+                  value={activeAcc ? (activeAcc.riskPct ?? 0.5) : cfg.risk}
+                  onChange={(e) => {
+                    const val = Number(e.target.value) || 0.5;
+                    if (activeAcc) {
+                      const updatedAcc = { ...activeAcc, riskPct: val };
+                      setAccounts((prev) => prev.map((a) => (a.id === activeAcc.id ? updatedAcc : a)));
+                    } else {
+                      setCfg({ ...cfg, risk: val });
+                    }
+                  }}
                 />
               </div>
               <div>
                 <label>Số lệnh tối đa mỗi ngày</label>
                 <input
                   type="number"
-                  value={cfg.maxT}
-                  onChange={(e) => setCfg({ ...cfg, maxT: Number(e.target.value) || 3 })}
+                  value={activeAcc ? (activeAcc.maxTradesDaily ?? 3) : cfg.maxT}
+                  onChange={(e) => {
+                    const val = Number(e.target.value) || 3;
+                    if (activeAcc) {
+                      const updatedAcc = { ...activeAcc, maxTradesDaily: val };
+                      setAccounts((prev) => prev.map((a) => (a.id === activeAcc.id ? updatedAcc : a)));
+                    } else {
+                      setCfg({ ...cfg, maxT: val });
+                    }
+                  }}
                 />
               </div>
               <div>
@@ -1564,18 +1707,29 @@ export default function Home() {
                 <input
                   type="number"
                   step="0.5"
-                  value={cfg.maxL}
-                  onChange={(e) => setCfg({ ...cfg, maxL: Number(e.target.value) || 2 })}
+                  value={activeAcc ? (activeAcc.maxLossRDaily ?? 2) : cfg.maxL}
+                  onChange={(e) => {
+                    const val = Number(e.target.value) || 2;
+                    if (activeAcc) {
+                      const updatedAcc = { ...activeAcc, maxLossRDaily: val };
+                      setAccounts((prev) => prev.map((a) => (a.id === activeAcc.id ? updatedAcc : a)));
+                    } else {
+                      setCfg({ ...cfg, maxL: val });
+                    }
+                  }}
                 />
               </div>
               <button
                 className="btn primary"
                 onClick={async () => {
+                  if (activeAcc) {
+                    await insertAccount(activeAcc);
+                  }
                   if (typeof window !== "undefined") {
                     localStorage.setItem("ictm", JSON.stringify({ trades, cfg }));
                   }
-                  await saveConfig(cfg);
-                  alert("Đã lưu cấu hình rủi ro!");
+                  await saveConfig(cfg, activeUser.nickname);
+                  alert("Đã lưu cấu hình rủi ro tài khoản quỹ thành công!");
                 }}
               >
                 Lưu cấu hình
@@ -1909,6 +2063,56 @@ export default function Home() {
                   value={accForm.mdl}
                   onChange={(e) => setAccForm({ ...accForm, mdl: Number(e.target.value) || 0 })}
                 />
+              </div>
+            </div>
+
+            {/* Risk Management & Discipline Settings */}
+            <div style={{ background: "var(--s2)", padding: "14px", borderRadius: "var(--radius-sm)", marginBottom: "14px", border: "1px solid var(--line)" }}>
+              <div style={{ fontWeight: 700, marginBottom: "4px" }}>
+                Quản lý rủi ro & Kỷ luật lệnh (Risk Management)
+              </div>
+              <div className="sub-title" style={{ marginBottom: "12px" }}>
+                Cấu hình rủi ro mỗi lệnh, số lệnh tối đa và mức cắt lỗ tối đa trong ngày (R) cho tài khoản này.
+              </div>
+              <div className="form-grid">
+                <div>
+                  <label>Rủi ro mỗi lệnh (% tài khoản)</label>
+                  <input
+                    type="number"
+                    step="0.1"
+                    min="0.1"
+                    value={accForm.riskPct}
+                    onChange={(e) => setAccForm({ ...accForm, riskPct: Number(e.target.value) || 0.5 })}
+                  />
+                  <div className="sub-title" style={{ fontSize: 11, marginTop: 4 }}>
+                    = ${(((accForm.balance || 50000) * (accForm.riskPct || 0.5)) / 100).toFixed(0)} / lệnh
+                  </div>
+                </div>
+                <div>
+                  <label>Số lệnh tối đa mỗi ngày</label>
+                  <input
+                    type="number"
+                    min="1"
+                    value={accForm.maxTradesDaily}
+                    onChange={(e) => setAccForm({ ...accForm, maxTradesDaily: Number(e.target.value) || 3 })}
+                  />
+                  <div className="sub-title" style={{ fontSize: 11, marginTop: 4 }}>
+                    Ngăn chặn overtrading
+                  </div>
+                </div>
+                <div>
+                  <label>Mức lỗ tối đa trong ngày (R)</label>
+                  <input
+                    type="number"
+                    step="0.5"
+                    min="0.5"
+                    value={accForm.maxLossRDaily}
+                    onChange={(e) => setAccForm({ ...accForm, maxLossRDaily: Number(e.target.value) || 2 })}
+                  />
+                  <div className="sub-title" style={{ fontSize: 11, marginTop: 4 }}>
+                    Khóa mở lệnh khi chạm ngưỡng
+                  </div>
+                </div>
               </div>
             </div>
 

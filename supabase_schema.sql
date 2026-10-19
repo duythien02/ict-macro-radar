@@ -32,11 +32,14 @@ CREATE TABLE IF NOT EXISTS public.accounts (
   consistency_pct NUMERIC DEFAULT 50,  -- Dành cho Futures Funded (mốc % consistency rule)
   current_phase INTEGER DEFAULT 1,     -- Vòng hiện tại dành cho CFD (1, 2, 3...)
   cfd_phases JSONB DEFAULT '[]'::jsonb, -- Danh sách mốc % target theo từng vòng CFD
+  risk_pct NUMERIC DEFAULT 0.5,        -- Rủi ro mỗi lệnh (% tài khoản)
+  max_trades_daily INTEGER DEFAULT 3,  -- Số lệnh tối đa mỗi ngày
+  max_loss_r_daily NUMERIC DEFAULT 2,  -- Mức lỗ tối đa trong ngày (R)
   created_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now()) NOT NULL,
   updated_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now()) NOT NULL
 );
 
--- Bổ sung cột user_nickname nếu bảng accounts đã tồn tại từ trước
+-- Bổ sung các cột mới nếu bảng accounts đã tồn tại từ trước
 DO $$
 BEGIN
   IF NOT EXISTS (
@@ -44,6 +47,27 @@ BEGIN
     WHERE table_name='accounts' AND column_name='user_nickname'
   ) THEN
     ALTER TABLE public.accounts ADD COLUMN user_nickname TEXT NOT NULL DEFAULT 'demo_trader';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns 
+    WHERE table_name='accounts' AND column_name='risk_pct'
+  ) THEN
+    ALTER TABLE public.accounts ADD COLUMN risk_pct NUMERIC DEFAULT 0.5;
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns 
+    WHERE table_name='accounts' AND column_name='max_trades_daily'
+  ) THEN
+    ALTER TABLE public.accounts ADD COLUMN max_trades_daily INTEGER DEFAULT 3;
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns 
+    WHERE table_name='accounts' AND column_name='max_loss_r_daily'
+  ) THEN
+    ALTER TABLE public.accounts ADD COLUMN max_loss_r_daily NUMERIC DEFAULT 2;
   END IF;
 END $$;
 

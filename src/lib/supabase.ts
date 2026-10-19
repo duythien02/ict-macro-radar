@@ -142,6 +142,9 @@ export async function fetchAccounts(userNickname = "demo_trader"): Promise<PropA
           consistencyPct: d.consistency_pct !== null ? Number(d.consistency_pct) : undefined,
           currentPhase: d.current_phase !== null ? Number(d.current_phase) : undefined,
           cfdPhases: d.cfd_phases || [],
+          riskPct: d.risk_pct !== null && d.risk_pct !== undefined ? Number(d.risk_pct) : 0.5,
+          maxTradesDaily: d.max_trades_daily !== null && d.max_trades_daily !== undefined ? Number(d.max_trades_daily) : 3,
+          maxLossRDaily: d.max_loss_r_daily !== null && d.max_loss_r_daily !== undefined ? Number(d.max_loss_r_daily) : 2,
           createdAt: d.created_at,
           updatedAt: d.updated_at,
         }));
@@ -220,6 +223,9 @@ export async function insertAccount(acc: PropAccount): Promise<boolean> {
         consistency_pct: accWithUser.consistencyPct ?? 50,
         current_phase: accWithUser.currentPhase ?? 1,
         cfd_phases: accWithUser.cfdPhases ?? [],
+        risk_pct: accWithUser.riskPct ?? 0.5,
+        max_trades_daily: accWithUser.maxTradesDaily ?? 3,
+        max_loss_r_daily: accWithUser.maxLossRDaily ?? 2,
         updated_at: new Date().toISOString(),
       };
       const { error } = await sb.from("accounts").upsert(row);

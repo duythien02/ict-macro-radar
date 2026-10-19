@@ -37,6 +37,11 @@ export interface PropAccount {
   currentPhase?: number;
   cfdPhases?: CFDPhase[];
 
+  // Quy tắc quản lý rủi ro riêng của từng tài khoản quỹ
+  riskPct?: number;        // Rủi ro mỗi lệnh (% tài khoản), ví dụ 0.5%
+  maxTradesDaily?: number; // Số lệnh tối đa mỗi ngày, ví dụ 3 lệnh
+  maxLossRDaily?: number;  // Mức lỗ tối đa trong ngày (R), ví dụ 2R
+
   createdAt?: string;
   updatedAt?: string;
 }
