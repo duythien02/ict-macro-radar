@@ -96,6 +96,21 @@ export default function Home() {
     seasonTxt: "Mùa hè Mỹ (EDT) · VN lệch +11h",
   });
 
+  // Overlay Mouse Tracker to prevent modal from accidentally closing when selecting/dragging text
+  const overlayMouseDownRef = React.useRef<EventTarget | null>(null);
+
+  const handleOverlayMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
+    overlayMouseDownRef.current = e.target;
+  };
+
+  const handleOverlayClick = (closeFn: () => void) => (e: React.MouseEvent<HTMLDivElement>) => {
+    // Only close if BOTH mousedown and mouseup/click originated directly on the overlay backdrop itself
+    if (e.target === e.currentTarget && overlayMouseDownRef.current === e.currentTarget) {
+      closeFn();
+    }
+    overlayMouseDownRef.current = null;
+  };
+
   // Load User Data helper
   const loadUserData = async (nickname: string, displayName?: string) => {
     const userProfile = await registerOrLoginUser(nickname, displayName);
@@ -1767,8 +1782,16 @@ export default function Home() {
 
       {/* NEW TRADE DIALOG */}
       {dlgOpen && (
-        <div className="modal-overlay" onClick={() => setDlgOpen(false)}>
-          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+        <div
+          className="modal-overlay"
+          onMouseDown={handleOverlayMouseDown}
+          onClick={handleOverlayClick(() => setDlgOpen(false))}
+        >
+          <div
+            className="modal-content"
+            onMouseDown={(e) => e.stopPropagation()}
+            onClick={(e) => e.stopPropagation()}
+          >
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
               <h2 style={{ margin: 0 }}>Ghi lệnh giao dịch mới</h2>
               <button className="btn" onClick={() => setDlgOpen(false)}>Đóng</button>
@@ -1950,8 +1973,17 @@ export default function Home() {
 
       {/* ACCOUNT MODAL (CREATE / EDIT PROP ACCOUNT) */}
       {accModalOpen && (
-        <div className="modal-overlay" onClick={() => setAccModalOpen(false)}>
-          <div className="modal-content" style={{ maxWidth: "620px" }} onClick={(e) => e.stopPropagation()}>
+        <div
+          className="modal-overlay"
+          onMouseDown={handleOverlayMouseDown}
+          onClick={handleOverlayClick(() => setAccModalOpen(false))}
+        >
+          <div
+            className="modal-content"
+            style={{ maxWidth: "620px" }}
+            onMouseDown={(e) => e.stopPropagation()}
+            onClick={(e) => e.stopPropagation()}
+          >
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
               <h2 style={{ margin: 0 }}>
                 {editingAccountId ? "Chỉnh sửa tài khoản quỹ" : "Thêm tài khoản quỹ mới"}
@@ -2252,8 +2284,17 @@ export default function Home() {
 
       {/* USER LOGIN / SWITCH NICKNAME MODAL */}
       {userModalOpen && (
-        <div className="modal-overlay" onClick={() => setUserModalOpen(false)}>
-          <div className="modal-content" style={{ maxWidth: "480px" }} onClick={(e) => e.stopPropagation()}>
+        <div
+          className="modal-overlay"
+          onMouseDown={handleOverlayMouseDown}
+          onClick={handleOverlayClick(() => setUserModalOpen(false))}
+        >
+          <div
+            className="modal-content"
+            style={{ maxWidth: "480px" }}
+            onMouseDown={(e) => e.stopPropagation()}
+            onClick={(e) => e.stopPropagation()}
+          >
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
               <h2 style={{ margin: 0 }}>Đăng nhập Nickname</h2>
               <button className="btn" onClick={() => setUserModalOpen(false)}>Đóng</button>
