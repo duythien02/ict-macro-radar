@@ -149,7 +149,7 @@ CREATE INDEX IF NOT EXISTS idx_trades_user_nickname ON public.trades(user_nickna
 
 -- 4. Bảng cấu hình người dùng (user_config)
 CREATE TABLE IF NOT EXISTS public.user_config (
-  id TEXT PRIMARY KEY DEFAULT 'demo_trader',
+  id TEXT PRIMARY KEY,
   active_account_id TEXT,
   bal NUMERIC NOT NULL DEFAULT 50000,
   risk NUMERIC NOT NULL DEFAULT 0.5,

@@ -222,14 +222,20 @@ export default function Home() {
     const loadedAccounts = await fetchAccounts(userProfile.nickname);
     setAccounts(loadedAccounts);
 
-    const loadedCfg = await fetchConfig(userProfile.nickname);
-    setCfg(loadedCfg);
+    let loadedCfg = await fetchConfig(userProfile.nickname);
 
     const initialActiveId = (loadedCfg.activeAccountId && loadedAccounts.some((a) => a.id === loadedCfg.activeAccountId))
       ? loadedCfg.activeAccountId
       : (loadedAccounts[0]?.id || "");
     setActiveAccountId(initialActiveId);
     setTradeFormAccId(initialActiveId);
+
+    // Đồng bộ lưu user_config vào Supabase để bảng user_config không bị trống
+    if (!loadedCfg.activeAccountId && initialActiveId) {
+      loadedCfg = { ...loadedCfg, activeAccountId: initialActiveId };
+      await saveConfig(loadedCfg, userProfile.nickname);
+    }
+    setCfg(loadedCfg);
 
     const loadedTrades = await fetchTrades(undefined, userProfile.nickname);
     setTrades(loadedTrades);
@@ -534,6 +540,20 @@ export default function Home() {
       setActiveAccountId(id);
     }
     await insertAccount(newAcc);
+
+    // Lưu user_config vào Supabase để bảng user_config không bị trống
+    const updatedCfg: AppConfig = {
+      ...cfg,
+      userNickname: activeUser.nickname,
+      activeAccountId: id,
+      bal: Number(accForm.balance) || 50000,
+      risk: Number(accForm.riskPct) || 0.5,
+      maxT: Number(accForm.maxTradesDaily) || 3,
+      maxL: Number(accForm.maxLossRDaily) || 2,
+    };
+    setCfg(updatedCfg);
+    await saveConfig(updatedCfg, activeUser.nickname);
+
     setAccModalOpen(false);
     setEditingAccountId(null);
   };

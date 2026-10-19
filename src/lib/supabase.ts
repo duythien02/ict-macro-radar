@@ -232,6 +232,20 @@ export async function registerOrLoginUser(nickname: string, displayName?: string
         display_name: name,
         last_login_at: new Date().toISOString(),
       });
+
+      // Đảm bảo bản ghi cấu hình user_config được tạo trong Supabase
+      const { data: existingCfg } = await sb.from("user_config").select("id").eq("id", cleanNick).maybeSingle();
+      if (!existingCfg) {
+        await sb.from("user_config").upsert({
+          id: cleanNick,
+          active_account_id: null,
+          bal: 50000,
+          risk: 0.5,
+          max_t: 3,
+          max_l: 2.0,
+          updated_at: new Date().toISOString(),
+        });
+      }
     } catch (e) {
       console.warn("Supabase user login warning:", e);
     }
@@ -372,6 +386,22 @@ export async function insertAccount(acc: PropAccount): Promise<boolean> {
           console.warn("Lỗi lưu account Supabase (tối giản):", fbRes.error.message || fbRes.error.details || fbRes.error);
         }
       }
+
+      // Tự động liên kết tài khoản này vào user_config nếu user_config chưa có active_account_id
+      try {
+        const { data: userCfg } = await sb.from("user_config").select("active_account_id").eq("id", userNick).maybeSingle();
+        if (!userCfg || !userCfg.active_account_id) {
+          await sb.from("user_config").upsert({
+            id: userNick,
+            active_account_id: accWithUser.id,
+            bal: accWithUser.balance,
+            risk: accWithUser.riskPct || 0.5,
+            max_t: accWithUser.maxTradesDaily || 3,
+            max_l: accWithUser.maxLossRDaily || 2.0,
+            updated_at: new Date().toISOString(),
+          });
+        }
+      } catch {}
     } catch (e: any) {
       console.warn("Supabase insertAccount catch error:", e?.message || e);
     }
@@ -571,27 +601,33 @@ export async function fetchConfig(userNickname = "demo_trader"): Promise<AppConf
   return defaultConfig;
 }
 
-export async function saveConfig(cfg: AppConfig, userNickname = "demo_trader"): Promise<void> {
+export async function saveConfig(cfg: AppConfig, userNickname?: string): Promise<void> {
+  const nick = userNickname || cfg.userNickname || (typeof window !== "undefined" ? localStorage.getItem("ict_active_user") : null);
+  if (!nick) return;
+
   if (typeof window !== "undefined") {
     try {
-      localStorage.setItem(`ictm_cfg_${userNickname}`, JSON.stringify(cfg));
+      localStorage.setItem(`ictm_cfg_${nick}`, JSON.stringify(cfg));
     } catch {}
   }
 
   const sb = getSupabase();
   if (sb) {
     try {
-      await sb.from("user_config").upsert({
-        id: userNickname,
-        active_account_id: cfg.activeAccountId,
-        bal: cfg.bal,
-        risk: cfg.risk,
-        max_t: cfg.maxT,
-        max_l: cfg.maxL,
+      const { error } = await sb.from("user_config").upsert({
+        id: nick,
+        active_account_id: cfg.activeAccountId || null,
+        bal: Number(cfg.bal) || 50000,
+        risk: Number(cfg.risk) || 0.5,
+        max_t: Number(cfg.maxT) || 3,
+        max_l: Number(cfg.maxL) || 2.0,
         updated_at: new Date().toISOString(),
       });
-    } catch (e) {
-      console.error("Supabase save config error:", e);
+      if (error) {
+        console.warn("Lỗi lưu user_config Supabase:", error.message || error.details || error);
+      }
+    } catch (e: any) {
+      console.warn("Supabase save config error:", e?.message || e);
     }
   }
 }
