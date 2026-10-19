@@ -15,6 +15,7 @@ import {
 } from "@/lib/supabase";
 
 export default function Home() {
+  const [mounted, setMounted] = useState(false);
   const [tab, setTab] = useState<"radar" | "prop" | "check" | "log" | "stat" | "cfg">("radar");
   const [trades, setTrades] = useState<Trade[]>([]);
   const [accounts, setAccounts] = useState<PropAccount[]>([]);
@@ -84,6 +85,7 @@ export default function Home() {
 
   // Load initial data
   useEffect(() => {
+    setMounted(true);
     const nw = new Date();
     setCalYear(nw.getFullYear());
     setCalMonth(nw.getMonth());
@@ -537,13 +539,13 @@ export default function Home() {
           </div>
         )}
 
-        <div className="clocks-container">
-          <div className="clk-box">
-            <b>{clocks.nyTxt}</b>
+        <div className="clocks-container" suppressHydrationWarning>
+          <div className="clk-box" suppressHydrationWarning>
+            <b suppressHydrationWarning>{mounted ? clocks.nyTxt : "--:--:--"}</b>
             <span>New York</span>
           </div>
-          <div className="clk-box">
-            <b>{clocks.vnTxt}</b>
+          <div className="clk-box" suppressHydrationWarning>
+            <b suppressHydrationWarning>{mounted ? clocks.vnTxt : "--:--:--"}</b>
             <span>Việt Nam</span>
           </div>
           <button className="theme-toggle" onClick={toggleTheme} title="Đổi giao diện Sáng / Tối">
