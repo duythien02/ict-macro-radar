@@ -1,5 +1,5 @@
 import { createClient, SupabaseClient } from "@supabase/supabase-js";
-import { Trade, AppConfig, PropAccount } from "@/types";
+import { Trade, AppConfig, PropAccount, UserProfile } from "@/types";
 import { DEFAULT_ACCOUNTS } from "@/lib/constants";
 
 let cachedClient: SupabaseClient | null = null;
@@ -45,16 +45,91 @@ export async function testSupabaseConnection(url: string, key: string): Promise<
 }
 
 // ==========================================
-// ACCOUNTS OPERATIONS
+// USER NICKNAME OPERATIONS
 // ==========================================
-export async function fetchAccounts(): Promise<PropAccount[]> {
+export async function fetchUsers(): Promise<UserProfile[]> {
   const sb = getSupabase();
   if (sb) {
     try {
-      const { data, error } = await sb.from("accounts").select("*").order("created_at", { ascending: true });
+      const { data, error } = await sb.from("users").select("*").order("last_login_at", { ascending: false });
+      if (!error && data && data.length > 0) {
+        return data.map((d: any) => ({
+          nickname: d.nickname,
+          displayName: d.display_name,
+          createdAt: d.created_at,
+          lastLoginAt: d.last_login_at,
+        }));
+      }
+    } catch {}
+  }
+
+  if (typeof window !== "undefined") {
+    try {
+      const local = localStorage.getItem("ict_recent_users");
+      if (local) {
+        const parsed = JSON.parse(local);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch {}
+  }
+
+  return [{ nickname: "demo_trader", displayName: "Demo Trader" }];
+}
+
+export async function registerOrLoginUser(nickname: string, displayName?: string): Promise<UserProfile> {
+  const cleanNick = nickname.trim().toLowerCase().replace(/[^a-z0-9_-]/g, "") || "demo_trader";
+  const name = displayName?.trim() || cleanNick;
+  const userObj: UserProfile = {
+    nickname: cleanNick,
+    displayName: name,
+    lastLoginAt: new Date().toISOString(),
+  };
+
+  // Save to LocalStorage recent users
+  if (typeof window !== "undefined") {
+    try {
+      localStorage.setItem("ict_active_user", cleanNick);
+      const existing = await fetchUsers();
+      const filtered = existing.filter((u) => u.nickname !== cleanNick);
+      const updated = [userObj, ...filtered].slice(0, 8);
+      localStorage.setItem("ict_recent_users", JSON.stringify(updated));
+    } catch {}
+  }
+
+  // Save to Supabase
+  const sb = getSupabase();
+  if (sb) {
+    try {
+      await sb.from("users").upsert({
+        nickname: cleanNick,
+        display_name: name,
+        last_login_at: new Date().toISOString(),
+      });
+    } catch (e) {
+      console.warn("Supabase user login warning:", e);
+    }
+  }
+
+  return userObj;
+}
+
+// ==========================================
+// ACCOUNTS OPERATIONS (PER USER NICKNAME)
+// ==========================================
+export async function fetchAccounts(userNickname = "demo_trader"): Promise<PropAccount[]> {
+  const sb = getSupabase();
+  if (sb) {
+    try {
+      const { data, error } = await sb
+        .from("accounts")
+        .select("*")
+        .eq("user_nickname", userNickname)
+        .order("created_at", { ascending: true });
+
       if (!error && data && data.length > 0) {
         return data.map((d: any) => ({
           id: d.id,
+          userNickname: d.user_nickname,
           name: d.name,
           propFirm: d.prop_firm,
           accountType: d.account_type,
@@ -82,29 +157,39 @@ export async function fetchAccounts(): Promise<PropAccount[]> {
       const local = localStorage.getItem("ict_accounts");
       if (local) {
         const parsed = JSON.parse(local);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+        if (Array.isArray(parsed)) {
+          const userAccounts = parsed.filter((a) => (a.userNickname || "demo_trader") === userNickname);
+          if (userAccounts.length > 0) return userAccounts;
+        }
       }
-      // Save default accounts on first load
-      localStorage.setItem("ict_accounts", JSON.stringify(DEFAULT_ACCOUNTS));
-      return DEFAULT_ACCOUNTS;
+      // If demo_trader and first time, seed default accounts
+      if (userNickname === "demo_trader") {
+        const seeded = DEFAULT_ACCOUNTS.map((a) => ({ ...a, userNickname: "demo_trader" }));
+        localStorage.setItem("ict_accounts", JSON.stringify(seeded));
+        return seeded;
+      }
     } catch {}
   }
 
-  return DEFAULT_ACCOUNTS;
+  return [];
 }
 
 export async function insertAccount(acc: PropAccount): Promise<boolean> {
+  const userNick = acc.userNickname || (typeof window !== "undefined" ? localStorage.getItem("ict_active_user") : null) || "demo_trader";
+  const accWithUser: PropAccount = { ...acc, userNickname: userNick };
+
   // Save to LocalStorage
   if (typeof window !== "undefined") {
     try {
-      const current = await fetchAccounts();
+      const local = localStorage.getItem("ict_accounts");
+      const current: PropAccount[] = local ? JSON.parse(local) : [];
       const existingIdx = current.findIndex((a) => a.id === acc.id);
       let updated: PropAccount[];
       if (existingIdx >= 0) {
         updated = [...current];
-        updated[existingIdx] = acc;
+        updated[existingIdx] = accWithUser;
       } else {
-        updated = [...current, acc];
+        updated = [...current, accWithUser];
       }
       localStorage.setItem("ict_accounts", JSON.stringify(updated));
     } catch {}
@@ -114,20 +199,27 @@ export async function insertAccount(acc: PropAccount): Promise<boolean> {
   const sb = getSupabase();
   if (sb) {
     try {
+      // Ensure user exists first
+      await sb.from("users").upsert({
+        nickname: userNick,
+        last_login_at: new Date().toISOString(),
+      });
+
       const row = {
-        id: acc.id,
-        name: acc.name,
-        prop_firm: acc.propFirm,
-        account_type: acc.accountType,
-        balance: acc.balance,
-        current_balance: acc.currentBalance ?? acc.balance,
-        mll: acc.mll,
-        mdl: acc.mdl,
-        target: acc.target,
-        status: acc.status,
-        consistency_pct: acc.consistencyPct ?? 50,
-        current_phase: acc.currentPhase ?? 1,
-        cfd_phases: acc.cfdPhases ?? [],
+        id: accWithUser.id,
+        user_nickname: userNick,
+        name: accWithUser.name,
+        prop_firm: accWithUser.propFirm,
+        account_type: accWithUser.accountType,
+        balance: accWithUser.balance,
+        current_balance: accWithUser.currentBalance ?? accWithUser.balance,
+        mll: accWithUser.mll,
+        mdl: accWithUser.mdl,
+        target: accWithUser.target,
+        status: accWithUser.status,
+        consistency_pct: accWithUser.consistencyPct ?? 50,
+        current_phase: accWithUser.currentPhase ?? 1,
+        cfd_phases: accWithUser.cfdPhases ?? [],
         updated_at: new Date().toISOString(),
       };
       const { error } = await sb.from("accounts").upsert(row);
@@ -144,9 +236,12 @@ export async function removeAccount(id: string): Promise<boolean> {
   // Remove from LocalStorage
   if (typeof window !== "undefined") {
     try {
-      const current = await fetchAccounts();
-      const updated = current.filter((a) => a.id !== id);
-      localStorage.setItem("ict_accounts", JSON.stringify(updated));
+      const local = localStorage.getItem("ict_accounts");
+      if (local) {
+        const current: PropAccount[] = JSON.parse(local);
+        const updated = current.filter((a) => a.id !== id);
+        localStorage.setItem("ict_accounts", JSON.stringify(updated));
+      }
     } catch {}
   }
 
@@ -165,18 +260,19 @@ export async function removeAccount(id: string): Promise<boolean> {
 }
 
 // ==========================================
-// TRADES OPERATIONS
+// TRADES OPERATIONS (PER USER NICKNAME)
 // ==========================================
-export async function fetchTrades(accountId?: string): Promise<Trade[]> {
+export async function fetchTrades(accountId?: string, userNickname = "demo_trader"): Promise<Trade[]> {
   const sb = getSupabase();
   if (!sb) {
-    // Fallback to localStorage
     if (typeof window !== "undefined") {
       try {
         const local = localStorage.getItem("ictm");
         if (local) {
           const parsed = JSON.parse(local);
-          const allTrades: Trade[] = parsed.trades || [];
+          const allTrades: Trade[] = (parsed.trades || []).filter(
+            (t: Trade) => (t.userNickname || "demo_trader") === userNickname
+          );
           if (accountId) {
             return allTrades.filter((t) => !t.accountId || t.accountId === accountId);
           }
@@ -188,7 +284,12 @@ export async function fetchTrades(accountId?: string): Promise<Trade[]> {
   }
 
   try {
-    let query = sb.from("trades").select("*").order("time", { ascending: true });
+    let query = sb
+      .from("trades")
+      .select("*")
+      .eq("user_nickname", userNickname)
+      .order("time", { ascending: true });
+
     if (accountId) {
       query = query.or(`account_id.eq.${accountId},account_id.is.null`);
     }
@@ -196,6 +297,7 @@ export async function fetchTrades(accountId?: string): Promise<Trade[]> {
     if (error) throw error;
     return (data || []).map((t: any) => ({
       id: t.id,
+      userNickname: t.user_nickname,
       accountId: t.account_id,
       pair: t.pair,
       pv: Number(t.pv),
@@ -221,7 +323,9 @@ export async function fetchTrades(accountId?: string): Promise<Trade[]> {
         const local = localStorage.getItem("ictm");
         if (local) {
           const parsed = JSON.parse(local);
-          const allTrades: Trade[] = parsed.trades || [];
+          const allTrades: Trade[] = (parsed.trades || []).filter(
+            (t: Trade) => (t.userNickname || "demo_trader") === userNickname
+          );
           if (accountId) {
             return allTrades.filter((t) => !t.accountId || t.accountId === accountId);
           }
@@ -234,28 +338,32 @@ export async function fetchTrades(accountId?: string): Promise<Trade[]> {
 }
 
 export async function insertTrade(trade: Trade): Promise<boolean> {
+  const userNick = trade.userNickname || (typeof window !== "undefined" ? localStorage.getItem("ict_active_user") : null) || "demo_trader";
+  const tradeWithUser: Trade = { ...trade, userNickname: userNick };
+
   const sb = getSupabase();
   if (sb) {
     try {
       const row = {
-        id: trade.id,
-        account_id: trade.accountId || null,
-        pair: trade.pair,
-        pv: trade.pv,
-        side: trade.side,
-        ctr: trade.ctr,
-        sess: trade.sess,
-        setup: trade.setup,
-        entry: trade.entry,
-        sl: trade.sl,
-        tp: trade.tp,
-        exit: trade.exit,
-        pts: trade.pts,
-        pnl: trade.pnl,
-        r: trade.r,
-        disc: trade.disc,
-        notes: trade.notes,
-        time: trade.time,
+        id: tradeWithUser.id,
+        user_nickname: userNick,
+        account_id: tradeWithUser.accountId || null,
+        pair: tradeWithUser.pair,
+        pv: tradeWithUser.pv,
+        side: tradeWithUser.side,
+        ctr: tradeWithUser.ctr,
+        sess: tradeWithUser.sess,
+        setup: tradeWithUser.setup,
+        entry: tradeWithUser.entry,
+        sl: tradeWithUser.sl,
+        tp: tradeWithUser.tp,
+        exit: tradeWithUser.exit,
+        pts: tradeWithUser.pts,
+        pnl: tradeWithUser.pnl,
+        r: tradeWithUser.r,
+        disc: tradeWithUser.disc,
+        notes: tradeWithUser.notes,
+        time: tradeWithUser.time,
       };
       const { error } = await sb.from("trades").upsert(row);
       if (error) console.error("Lỗi lưu Supabase:", error);
@@ -280,17 +388,18 @@ export async function removeTrade(id: string): Promise<boolean> {
 }
 
 // ==========================================
-// USER CONFIG OPERATIONS
+// USER CONFIG OPERATIONS (PER USER NICKNAME)
 // ==========================================
-export async function fetchConfig(): Promise<AppConfig> {
-  const defaultConfig: AppConfig = { bal: 50000, risk: 0.5, maxT: 3, maxL: 2 };
+export async function fetchConfig(userNickname = "demo_trader"): Promise<AppConfig> {
+  const defaultConfig: AppConfig = { userNickname, bal: 50000, risk: 0.5, maxT: 3, maxL: 2 };
   const sb = getSupabase();
 
   if (sb) {
     try {
-      const { data, error } = await sb.from("user_config").select("*").eq("id", "default").single();
+      const { data, error } = await sb.from("user_config").select("*").eq("id", userNickname).single();
       if (!error && data) {
         return {
+          userNickname,
           activeAccountId: data.active_account_id,
           bal: Number(data.bal) || defaultConfig.bal,
           risk: Number(data.risk) || defaultConfig.risk,
@@ -303,10 +412,10 @@ export async function fetchConfig(): Promise<AppConfig> {
 
   if (typeof window !== "undefined") {
     try {
-      const local = localStorage.getItem("ictm");
+      const local = localStorage.getItem(`ictm_cfg_${userNickname}`);
       if (local) {
         const parsed = JSON.parse(local);
-        if (parsed.cfg) return { ...defaultConfig, ...parsed.cfg };
+        return { ...defaultConfig, ...parsed };
       }
     } catch {}
   }
@@ -314,12 +423,18 @@ export async function fetchConfig(): Promise<AppConfig> {
   return defaultConfig;
 }
 
-export async function saveConfig(cfg: AppConfig): Promise<void> {
+export async function saveConfig(cfg: AppConfig, userNickname = "demo_trader"): Promise<void> {
+  if (typeof window !== "undefined") {
+    try {
+      localStorage.setItem(`ictm_cfg_${userNickname}`, JSON.stringify(cfg));
+    } catch {}
+  }
+
   const sb = getSupabase();
   if (sb) {
     try {
       await sb.from("user_config").upsert({
-        id: "default",
+        id: userNickname,
         active_account_id: cfg.activeAccountId,
         bal: cfg.bal,
         risk: cfg.risk,

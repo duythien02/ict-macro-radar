@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useMemo } from "react";
-import { Trade, AppConfig, MacroSession, PropAccount, AccountType, PropFirm, AccountStatus, CFDPhase } from "@/types";
+import { Trade, AppConfig, MacroSession, PropAccount, AccountType, PropFirm, AccountStatus, CFDPhase, UserProfile } from "@/types";
 import { SES, CHK, PV, SETUPS, DEFAULT_ACCOUNTS, PROP_PRESETS } from "@/lib/constants";
 import {
   fetchTrades,
@@ -12,11 +12,21 @@ import {
   fetchAccounts,
   insertAccount,
   removeAccount,
+  fetchUsers,
+  registerOrLoginUser,
 } from "@/lib/supabase";
 
 export default function Home() {
   const [mounted, setMounted] = useState(false);
   const [tab, setTab] = useState<"radar" | "prop" | "check" | "log" | "stat" | "cfg">("radar");
+
+  // User Profile state
+  const [activeUser, setActiveUser] = useState<UserProfile>({ nickname: "demo_trader", displayName: "Demo Trader" });
+  const [recentUsers, setRecentUsers] = useState<UserProfile[]>([]);
+  const [userModalOpen, setUserModalOpen] = useState(false);
+  const [loginNickInput, setLoginNickInput] = useState("");
+  const [loginNameInput, setLoginNameInput] = useState("");
+
   const [trades, setTrades] = useState<Trade[]>([]);
   const [accounts, setAccounts] = useState<PropAccount[]>([]);
   const [activeAccountId, setActiveAccountId] = useState<string>("");
@@ -83,6 +93,30 @@ export default function Home() {
     seasonTxt: "Mùa hè Mỹ (EDT) · VN lệch +11h",
   });
 
+  // Load User Data helper
+  const loadUserData = async (nickname: string, displayName?: string) => {
+    const userProfile = await registerOrLoginUser(nickname, displayName);
+    setActiveUser(userProfile);
+
+    const loadedRecent = await fetchUsers();
+    setRecentUsers(loadedRecent);
+
+    const loadedAccounts = await fetchAccounts(userProfile.nickname);
+    setAccounts(loadedAccounts);
+
+    const loadedCfg = await fetchConfig(userProfile.nickname);
+    setCfg(loadedCfg);
+
+    const initialActiveId = (loadedCfg.activeAccountId && loadedAccounts.some((a) => a.id === loadedCfg.activeAccountId))
+      ? loadedCfg.activeAccountId
+      : (loadedAccounts[0]?.id || "");
+    setActiveAccountId(initialActiveId);
+    setTradeFormAccId(initialActiveId);
+
+    const loadedTrades = await fetchTrades(undefined, userProfile.nickname);
+    setTrades(loadedTrades);
+  };
+
   // Load initial data
   useEffect(() => {
     setMounted(true);
@@ -101,24 +135,9 @@ export default function Home() {
       document.documentElement.setAttribute("data-theme", "dark");
     }
 
-    // Load accounts, config & trades
-    async function init() {
-      const loadedAccounts = await fetchAccounts();
-      setAccounts(loadedAccounts);
-
-      const loadedCfg = await fetchConfig();
-      setCfg(loadedCfg);
-
-      const initialActiveId = (loadedCfg.activeAccountId && loadedAccounts.some(a => a.id === loadedCfg.activeAccountId))
-        ? loadedCfg.activeAccountId
-        : (loadedAccounts[0]?.id || "");
-      setActiveAccountId(initialActiveId);
-      setTradeFormAccId(initialActiveId);
-
-      const loadedTrades = await fetchTrades();
-      setTrades(loadedTrades);
-    }
-    init();
+    // Load active user
+    const savedNick = localStorage.getItem("ict_active_user") || "demo_trader";
+    loadUserData(savedNick);
   }, []);
 
   // Clocks loop
@@ -287,13 +306,26 @@ export default function Home() {
     });
   };
 
+  // Switch User Handler
+  const handleSwitchUser = async (nickname: string, displayName?: string) => {
+    const cleanNick = nickname.trim().toLowerCase().replace(/[^a-z0-9_-]/g, "");
+    if (!cleanNick) {
+      alert("Vui lòng nhập nickname hợp lệ (chữ, số, gạch dưới)!");
+      return;
+    }
+    await loadUserData(cleanNick, displayName);
+    setUserModalOpen(false);
+    setLoginNickInput("");
+    setLoginNameInput("");
+  };
+
   // Select Active Account Handler
   const handleSelectActiveAccount = async (id: string) => {
     setActiveAccountId(id);
     setTradeFormAccId(id);
     const newCfg = { ...cfg, activeAccountId: id };
     setCfg(newCfg);
-    await saveConfig(newCfg);
+    await saveConfig(newCfg, activeUser.nickname);
   };
 
   // Save Account (Create or Update)
@@ -305,6 +337,7 @@ export default function Home() {
     const id = editingAccountId || `ACC-${accForm.propFirm.toUpperCase()}-${Date.now().toString().slice(-6)}`;
     const newAcc: PropAccount = {
       id,
+      userNickname: activeUser.nickname,
       name: accForm.name,
       propFirm: accForm.propFirm,
       accountType: accForm.accountType,
@@ -377,6 +410,7 @@ export default function Home() {
 
     const newTrade: Trade = {
       id: `TRD-${400 + trades.length + 1}`,
+      userNickname: activeUser.nickname,
       accountId: targetAccId,
       pair: tradeForm.pair.toUpperCase(),
       pv: tradeForm.pv,
@@ -538,6 +572,30 @@ export default function Home() {
             )}
           </div>
         )}
+
+        {/* User Nickname Profile Pill */}
+        <div
+          className="user-header-pill"
+          onClick={() => {
+            setLoginNickInput(activeUser.nickname);
+            setLoginNameInput(activeUser.displayName || "");
+            setUserModalOpen(true);
+          }}
+          title="Bấm để đổi Nickname người dùng"
+        >
+          <div className="user-avatar">
+            {activeUser.nickname.slice(0, 2).toUpperCase()}
+          </div>
+          <div>
+            <span style={{ fontSize: 10, color: "var(--mut)", display: "block", lineHeight: 1.1 }}>
+              Trader:
+            </span>
+            <span className="user-nick-text">{activeUser.nickname}</span>
+          </div>
+          <span className="badge-tag" style={{ background: "var(--s3)", color: "var(--mut)", marginLeft: 2, fontSize: 9 }}>
+            Đổi
+          </span>
+        </div>
 
         <div className="clocks-container" suppressHydrationWarning>
           <div className="clk-box" suppressHydrationWarning>
@@ -1982,6 +2040,78 @@ export default function Home() {
               <button className="btn" onClick={() => setAccModalOpen(false)}>Hủy</button>
               <button className="btn primary" onClick={handleSaveAccount}>
                 {editingAccountId ? "Lưu thay đổi" : "Tạo tài khoản"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* USER LOGIN / SWITCH NICKNAME MODAL */}
+      {userModalOpen && (
+        <div className="modal-overlay" onClick={() => setUserModalOpen(false)}>
+          <div className="modal-content" style={{ maxWidth: "480px" }} onClick={(e) => e.stopPropagation()}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
+              <h2 style={{ margin: 0 }}>Đăng nhập Nickname</h2>
+              <button className="btn" onClick={() => setUserModalOpen(false)}>Đóng</button>
+            </div>
+
+            <div className="sub-title" style={{ marginBottom: "16px" }}>
+              Mỗi Nickname sẽ sở hữu các tài khoản quỹ (Prop Firm) và nhật ký giao dịch hoàn toàn riêng biệt.
+            </div>
+
+            <div style={{ marginBottom: "12px" }}>
+              <label>Nickname người dùng</label>
+              <input
+                value={loginNickInput}
+                onChange={(e) => setLoginNickInput(e.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, ""))}
+                placeholder="Ví dụ: thien_ict, alex_trader..."
+                autoFocus
+              />
+              <div className="sub-title" style={{ marginTop: "4px" }}>
+                Chỉ gồm chữ cái viết thường, số, dấu gạch dưới `_` hoặc gạch ngang `-`.
+              </div>
+            </div>
+
+            <div style={{ marginBottom: "16px" }}>
+              <label>Tên hiển thị (Tùy chọn)</label>
+              <input
+                value={loginNameInput}
+                onChange={(e) => setLoginNameInput(e.target.value)}
+                placeholder="Ví dụ: Thiện ICT, Alex Trader..."
+              />
+            </div>
+
+            {recentUsers.length > 0 && (
+              <div style={{ marginBottom: "20px" }}>
+                <label>Tài khoản đã đăng nhập gần đây trên máy này:</label>
+                <div className="recent-users-chips">
+                  {recentUsers.map((u) => (
+                    <button
+                      key={u.nickname}
+                      type="button"
+                      className={`user-chip ${u.nickname === activeUser.nickname ? "active" : ""}`}
+                      onClick={() => handleSwitchUser(u.nickname, u.displayName)}
+                    >
+                      <span>{u.nickname}</span>
+                      {u.displayName && u.displayName !== u.nickname && (
+                        <span style={{ fontSize: 10, color: "var(--mut)" }}>({u.displayName})</span>
+                      )}
+                      {u.nickname === activeUser.nickname && (
+                        <span className="badge-tag badge-funded" style={{ fontSize: 9 }}>Đang dùng</span>
+                      )}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: "10px" }}>
+              <button className="btn" onClick={() => setUserModalOpen(false)}>Hủy</button>
+              <button
+                className="btn primary"
+                onClick={() => handleSwitchUser(loginNickInput, loginNameInput)}
+              >
+                Đăng nhập / Tiếp tục
               </button>
             </div>
           </div>

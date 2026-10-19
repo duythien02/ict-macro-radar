@@ -10,8 +10,16 @@ export interface CFDPhase {
   mllPct: number;    // e.g. 10%
 }
 
+export interface UserProfile {
+  nickname: string;
+  displayName?: string;
+  createdAt?: string;
+  lastLoginAt?: string;
+}
+
 export interface PropAccount {
   id: string;
+  userNickname?: string;  // Nickname sở hữu tài khoản quỹ
   name: string;
   propFirm: PropFirm;
   accountType: AccountType;
@@ -45,7 +53,8 @@ export interface MacroSession {
 
 export interface Trade {
   id: string;
-  accountId?: string; // Gắn lệnh với tài khoản quỹ cụ thể
+  userNickname?: string; // Nickname sở hữu lệnh
+  accountId?: string;    // Gắn lệnh với tài khoản quỹ cụ thể
   pair: string;
   pv: number;
   side: number; // 1 for Long, -1 for Short
@@ -65,6 +74,7 @@ export interface Trade {
 }
 
 export interface AppConfig {
+  userNickname?: string;
   activeAccountId?: string;
   bal: number;
   risk: number;
@@ -79,3 +89,4 @@ export interface ChecklistItem {
   desc: string;
   required: boolean;
 }
+

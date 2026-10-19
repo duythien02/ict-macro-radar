@@ -856,6 +856,78 @@ input:focus, select:focus, textarea:focus {
   max-width: 200px;
 }
 
+/* User Profile Header & Switcher */
+.user-header-pill {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--s1);
+  border: 1px solid var(--line);
+  padding: 6px 12px;
+  border-radius: var(--radius-md);
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.user-header-pill:hover {
+  border-color: var(--blue);
+  background: var(--s2);
+}
+
+.user-avatar {
+  width: 24px;
+  height: 24px;
+  border-radius: 99px;
+  background: var(--blue-glow);
+  border: 1px solid var(--blue);
+  color: var(--blue);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 800;
+  font-size: 11px;
+  text-transform: uppercase;
+}
+
+.user-nick-text {
+  font-weight: 700;
+  color: var(--tx);
+}
+
+.recent-users-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.user-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  background: var(--s2);
+  border: 1px solid var(--line);
+  border-radius: 99px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  color: var(--tx);
+  transition: all 0.15s ease;
+}
+
+.user-chip:hover {
+  border-color: var(--blue);
+  color: var(--blue);
+}
+
+.user-chip.active {
+  background: rgba(59, 130, 246, 0.15);
+  border-color: var(--blue);
+  color: var(--blue);
+}
+
 .badge-tag {
   display: inline-block;
   padding: 2px 7px;
