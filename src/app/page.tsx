@@ -1,22 +1,50 @@
 "use client";
 
 import React, { useState, useEffect, useMemo } from "react";
-import { Trade, AppConfig, MacroSession } from "@/types";
-import { SES, CHK, PV, SETUPS } from "@/lib/constants";
+import { Trade, AppConfig, MacroSession, PropAccount, AccountType, PropFirm, AccountStatus, CFDPhase } from "@/types";
+import { SES, CHK, PV, SETUPS, DEFAULT_ACCOUNTS, PROP_PRESETS } from "@/lib/constants";
 import {
   fetchTrades,
   insertTrade,
   removeTrade,
   fetchConfig,
   saveConfig,
+  fetchAccounts,
+  insertAccount,
+  removeAccount,
 } from "@/lib/supabase";
 
 export default function Home() {
-  const [tab, setTab] = useState<"radar" | "check" | "log" | "stat" | "cfg">("radar");
+  const [tab, setTab] = useState<"radar" | "prop" | "check" | "log" | "stat" | "cfg">("radar");
   const [trades, setTrades] = useState<Trade[]>([]);
+  const [accounts, setAccounts] = useState<PropAccount[]>([]);
+  const [activeAccountId, setActiveAccountId] = useState<string>("");
+  const [accFilter, setAccFilter] = useState<string>("all");
   const [cfg, setCfg] = useState<AppConfig>({ bal: 50000, risk: 0.5, maxT: 3, maxL: 2 });
   const [chk, setChk] = useState<boolean[]>(CHK.map(() => false));
   const [theme, setTheme] = useState<"dark" | "light">("dark");
+
+  // Account Modal state
+  const [accModalOpen, setAccModalOpen] = useState(false);
+  const [editingAccountId, setEditingAccountId] = useState<string | null>(null);
+  const [accForm, setAccForm] = useState({
+    name: "Topstep 50K Combine",
+    propFirm: "topstep" as PropFirm,
+    accountType: "futures" as AccountType,
+    balance: 50000,
+    currentBalance: 50000,
+    mll: 2000,
+    mdl: 1000,
+    target: 3000,
+    status: "eval" as AccountStatus,
+    consistencyPct: 50,
+    currentPhase: 1,
+    cfdPhases: [
+      { phase: 1, name: "Vòng 1 (Challenge)", targetPct: 8, mdlPct: 5, mllPct: 10 },
+      { phase: 2, name: "Vòng 2 (Verification)", targetPct: 5, mdlPct: 5, mllPct: 10 },
+      { phase: 3, name: "Funded Live", targetPct: 0, mdlPct: 5, mllPct: 10 },
+    ] as CFDPhase[],
+  });
 
   // Calendar state
   const [calYear, setCalYear] = useState<number>(2026);
@@ -27,6 +55,7 @@ export default function Home() {
 
   // Dialog & Trade Form state
   const [dlgOpen, setDlgOpen] = useState(false);
+  const [tradeFormAccId, setTradeFormAccId] = useState<string>("");
   const [tradeForm, setTradeForm] = useState({
     pair: "MNQ",
     pv: 2,
@@ -70,10 +99,19 @@ export default function Home() {
       document.documentElement.setAttribute("data-theme", "dark");
     }
 
-    // Load trades & config
+    // Load accounts, config & trades
     async function init() {
+      const loadedAccounts = await fetchAccounts();
+      setAccounts(loadedAccounts);
+
       const loadedCfg = await fetchConfig();
       setCfg(loadedCfg);
+
+      const initialActiveId = (loadedCfg.activeAccountId && loadedAccounts.some(a => a.id === loadedCfg.activeAccountId))
+        ? loadedCfg.activeAccountId
+        : (loadedAccounts[0]?.id || "");
+      setActiveAccountId(initialActiveId);
+      setTradeFormAccId(initialActiveId);
 
       const loadedTrades = await fetchTrades();
       setTrades(loadedTrades);
@@ -144,13 +182,40 @@ export default function Home() {
   const nxtSess = macroCtx.nxt;
   const waitMin = macroCtx.wait;
 
-  // Today trades & guard
+  // Active Prop Account
+  const activeAcc = useMemo(() => {
+    return accounts.find((a) => a.id === activeAccountId) || accounts[0] || null;
+  }, [accounts, activeAccountId]);
+
+  // Trades of the active account
+  const activeAccTrades = useMemo(() => {
+    if (!activeAcc) return trades;
+    return trades.filter((t) => !t.accountId || t.accountId === activeAcc.id);
+  }, [trades, activeAcc]);
+
+  const activeAccNetPnl = useMemo(() => {
+    return activeAccTrades.reduce((a, b) => a + b.pnl, 0);
+  }, [activeAccTrades]);
+
+  const curAccBalance = useMemo(() => {
+    return (activeAcc?.balance ?? cfg.bal) + activeAccNetPnl;
+  }, [activeAcc, cfg.bal, activeAccNetPnl]);
+
+  // Today trades & guard based on active account
   const todayTrades = useMemo(() => {
     if (!todayDateStr) return [];
-    return trades.filter((t) => new Date(t.time).toDateString() === todayDateStr);
-  }, [trades, todayDateStr]);
+    return activeAccTrades.filter((t) => new Date(t.time).toDateString() === todayDateStr);
+  }, [activeAccTrades, todayDateStr]);
+
+  const todayPnl = useMemo(() => todayTrades.reduce((a, x) => a + x.pnl, 0), [todayTrades]);
   const todayR = useMemo(() => todayTrades.reduce((a, x) => a + x.r, 0), [todayTrades]);
-  const isLocked = todayTrades.length >= cfg.maxT || todayR <= -cfg.maxL;
+
+  // Limits
+  const activeMdl = activeAcc ? activeAcc.mdl : (cfg.maxL * cfg.bal * 0.01);
+  const activeMll = activeAcc ? activeAcc.mll : 2000;
+  const isDailyBreached = todayPnl <= -activeMdl;
+  const isMllBreached = activeAccNetPnl <= -activeMll;
+  const isLocked = todayTrades.length >= cfg.maxT || todayR <= -cfg.maxL || isDailyBreached || isMllBreached;
 
   // Toggle Theme
   const toggleTheme = () => {
@@ -177,6 +242,104 @@ export default function Home() {
   };
 
   const fmtR = (r: number) => `${r >= 0 ? "+" : ""}${r.toFixed(2)}R`;
+
+  // Consistency calculation for Futures Funded accounts
+  const getAccountConsistency = (acc: PropAccount) => {
+    const accTradesList = trades.filter((t) => !t.accountId || t.accountId === acc.id);
+    const dayProfits: Record<string, number> = {};
+    accTradesList.forEach((t) => {
+      const d = toDateKey(t.time);
+      dayProfits[d] = (dayProfits[d] || 0) + t.pnl;
+    });
+
+    const winDays = Object.values(dayProfits).filter((p) => p > 0);
+    const totalPositiveProfit = winDays.reduce((a, b) => a + b, 0);
+    const maxDayProfit = winDays.length > 0 ? Math.max(...winDays) : 0;
+    const consistencyPct = totalPositiveProfit > 0 ? (maxDayProfit / totalPositiveProfit) * 100 : 0;
+    const maxAllowedPct = acc.consistencyPct || 50;
+    const isConsistent = consistencyPct <= maxAllowedPct;
+    return { maxDayProfit, totalPositiveProfit, consistencyPct, maxAllowedPct, isConsistent };
+  };
+
+  // Select Preset Handler
+  const handleSelectPreset = (index: number) => {
+    const p = PROP_PRESETS[index];
+    if (!p) return;
+    setAccForm({
+      name: p.label,
+      propFirm: p.firm,
+      accountType: p.type,
+      balance: p.balance,
+      currentBalance: p.balance,
+      mll: p.mll,
+      mdl: p.mdl,
+      target: p.target,
+      status: "eval",
+      consistencyPct: p.consistency || 50,
+      currentPhase: 1,
+      cfdPhases: p.phases || [
+        { phase: 1, name: "Vòng 1 (Challenge)", targetPct: 8, mdlPct: 5, mllPct: 10 },
+        { phase: 2, name: "Vòng 2 (Verification)", targetPct: 5, mdlPct: 5, mllPct: 10 },
+        { phase: 3, name: "Funded Live", targetPct: 0, mdlPct: 5, mllPct: 10 },
+      ],
+    });
+  };
+
+  // Select Active Account Handler
+  const handleSelectActiveAccount = async (id: string) => {
+    setActiveAccountId(id);
+    setTradeFormAccId(id);
+    const newCfg = { ...cfg, activeAccountId: id };
+    setCfg(newCfg);
+    await saveConfig(newCfg);
+  };
+
+  // Save Account (Create or Update)
+  const handleSaveAccount = async () => {
+    if (!accForm.name.trim()) {
+      alert("Vui lòng nhập tên tài khoản!");
+      return;
+    }
+    const id = editingAccountId || `ACC-${accForm.propFirm.toUpperCase()}-${Date.now().toString().slice(-6)}`;
+    const newAcc: PropAccount = {
+      id,
+      name: accForm.name,
+      propFirm: accForm.propFirm,
+      accountType: accForm.accountType,
+      balance: Number(accForm.balance) || 50000,
+      currentBalance: Number(accForm.currentBalance) || Number(accForm.balance) || 50000,
+      mll: Number(accForm.mll) || 2000,
+      mdl: Number(accForm.mdl) || 1000,
+      target: Number(accForm.target) || 3000,
+      status: accForm.status,
+      consistencyPct: Number(accForm.consistencyPct) || 50,
+      currentPhase: Number(accForm.currentPhase) || 1,
+      cfdPhases: accForm.accountType === "cfd" ? accForm.cfdPhases : [],
+    };
+
+    const updated = editingAccountId
+      ? accounts.map((a) => (a.id === editingAccountId ? newAcc : a))
+      : [...accounts, newAcc];
+
+    setAccounts(updated);
+    if (!editingAccountId || activeAccountId === id) {
+      setActiveAccountId(id);
+    }
+    await insertAccount(newAcc);
+    setAccModalOpen(false);
+    setEditingAccountId(null);
+  };
+
+  // Delete Account
+  const handleDeleteAccount = async (id: string) => {
+    if (!confirm("Bạn có chắc chắn muốn xóa tài khoản quỹ này?")) return;
+    const updated = accounts.filter((a) => a.id !== id);
+    setAccounts(updated);
+    if (activeAccountId === id && updated.length > 0) {
+      setActiveAccountId(updated[0].id);
+    }
+    await removeAccount(id);
+  };
 
   // Calculated Real-time Values in Dialog
   const calcValues = useMemo(() => {
@@ -208,8 +371,11 @@ export default function Home() {
     const r = pts / risk;
     const pnl = pts * tradeForm.pv * (Number(tradeForm.ctr) || 1);
 
+    const targetAccId = tradeFormAccId || activeAccountId || accounts[0]?.id || "";
+
     const newTrade: Trade = {
       id: `TRD-${400 + trades.length + 1}`,
+      accountId: targetAccId,
       pair: tradeForm.pair.toUpperCase(),
       pv: tradeForm.pv,
       side: tradeForm.side,
@@ -343,6 +509,34 @@ export default function Home() {
           </div>
         </div>
 
+        {/* Prop Account Quick Switcher */}
+        {accounts.length > 0 && (
+          <div className="account-header-bar">
+            <div>
+              <span style={{ fontSize: 11, color: "var(--mut)", display: "block", marginBottom: 2 }}>Tài khoản đang chọn:</span>
+              <select
+                value={activeAccountId}
+                onChange={(e) => handleSelectActiveAccount(e.target.value)}
+              >
+                {accounts.map((acc) => (
+                  <option key={acc.id} value={acc.id}>
+                    {acc.name} ({acc.propFirm.toUpperCase()} - {acc.accountType.toUpperCase()})
+                  </option>
+                ))}
+              </select>
+            </div>
+            {activeAcc && (
+              <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
+                <span className={`badge-tag badge-${activeAcc.accountType}`}>{activeAcc.accountType}</span>
+                <span className={`badge-tag badge-${activeAcc.status}`}>{activeAcc.status}</span>
+                <span className="mono" style={{ fontWeight: 700, marginLeft: 4 }}>
+                  ${(curAccBalance).toLocaleString()}
+                </span>
+              </div>
+            )}
+          </div>
+        )}
+
         <div className="clocks-container">
           <div className="clk-box">
             <b>{clocks.nyTxt}</b>
@@ -362,6 +556,9 @@ export default function Home() {
       <nav className="tab-nav">
         <button className={tab === "radar" ? "active" : ""} onClick={() => setTab("radar")}>
           Radar giờ Macro
+        </button>
+        <button className={tab === "prop" ? "active" : ""} onClick={() => setTab("prop")}>
+          Tài khoản quỹ ({accounts.length})
         </button>
         <button className={tab === "check" ? "active" : ""} onClick={() => setTab("check")}>
           Checklist & Kỷ luật
@@ -492,6 +689,283 @@ export default function Home() {
         </div>
       )}
 
+      {/* TAB: TÀI KHOẢN QUÝ (PROP FIRM ACCOUNTS) */}
+      {tab === "prop" && (
+        <div>
+          <div className="panel" style={{ marginBottom: 20 }}>
+            <div className="panel-header">
+              <div>
+                <h2>Quản lý tài khoản quỹ (Prop Firm)</h2>
+                <div className="sub-title">
+                  Hỗ trợ 2 loại Futures & CFD (Topstep, Bulenox, The5ers). Tùy chỉnh MLL, MDL, Target, mốc Consistency (Futures Funded) và các vòng thi CFD.
+                </div>
+              </div>
+              <button
+                className="btn primary"
+                onClick={() => {
+                  setEditingAccountId(null);
+                  handleSelectPreset(0);
+                  setAccModalOpen(true);
+                }}
+              >
+                + Thêm tài khoản quỹ
+              </button>
+            </div>
+
+            {/* Summary cards */}
+            <div className="grid4" style={{ marginTop: 16 }}>
+              <div className="stat-card">
+                <span>Tổng số tài khoản</span>
+                <b>{accounts.length}</b>
+                <small>
+                  {accounts.filter((a) => a.accountType === "futures").length} Futures · {accounts.filter((a) => a.accountType === "cfd").length} CFD
+                </small>
+              </div>
+              <div className="stat-card">
+                <span>Tài khoản đang chọn</span>
+                <b style={{ fontSize: 16 }}>{activeAcc?.name || "Chưa chọn"}</b>
+                <small>
+                  {activeAcc ? `${activeAcc.propFirm.toUpperCase()} · ${activeAcc.accountType.toUpperCase()} · ${activeAcc.status.toUpperCase()}` : "--"}
+                </small>
+              </div>
+              <div className="stat-card">
+                <span>Tổng quy mô vốn quỹ</span>
+                <b className="mono">${accounts.reduce((a, b) => a + b.balance, 0).toLocaleString()}</b>
+                <small>{accounts.filter((a) => a.status === "funded").length} tài khoản Funded Live</small>
+              </div>
+              <div className="stat-card">
+                <span>P&L tài khoản hiện tại</span>
+                <b className={`mono ${activeAccNetPnl >= 0 ? "up" : "dn"}`}>
+                  {activeAccNetPnl >= 0 ? "+" : ""}${activeAccNetPnl.toFixed(0)}
+                </b>
+                <small>Số dư: ${curAccBalance.toLocaleString()}</small>
+              </div>
+            </div>
+          </div>
+
+          {/* Accounts Grid */}
+          <div className="acc-grid">
+            {accounts.map((acc) => {
+              const isActive = acc.id === activeAccountId;
+              const accTradesList = trades.filter((t) => !t.accountId || t.accountId === acc.id);
+              const netPnl = accTradesList.reduce((a, b) => a + b.pnl, 0);
+              const curBal = acc.balance + netPnl;
+              const pnlPct = acc.balance ? (netPnl / acc.balance) * 100 : 0;
+
+              // Target progress
+              const targetPct = acc.target > 0 ? Math.min(100, Math.max(0, (netPnl / acc.target) * 100)) : 0;
+
+              // MLL buffer
+              const maxDrawdown = accTradesList.length > 0 ? Math.max(0, -netPnl) : 0;
+              const mllBuffer = Math.max(0, acc.mll - maxDrawdown);
+              const mllPctUsed = Math.min(100, (maxDrawdown / acc.mll) * 100);
+
+              // MDL today buffer
+              const accTodayTrades = accTradesList.filter((t) => new Date(t.time).toDateString() === todayDateStr);
+              const todayAccPnl = accTodayTrades.reduce((a, b) => a + b.pnl, 0);
+              const todayLoss = Math.max(0, -todayAccPnl);
+              const mdlBuffer = Math.max(0, acc.mdl - todayLoss);
+              const mdlPctUsed = Math.min(100, (todayLoss / acc.mdl) * 100);
+
+              // Consistency for Futures Funded
+              const consistency = getAccountConsistency(acc);
+
+              return (
+                <div key={acc.id} className={`acc-card ${isActive ? "is-active" : ""}`}>
+                  <div className="acc-card-top">
+                    <div>
+                      <div style={{ display: "flex", gap: "6px", alignItems: "center", marginBottom: 6 }}>
+                        <span className="acc-firm-label">{acc.propFirm}</span>
+                        <span className={`badge-tag badge-${acc.accountType}`}>{acc.accountType}</span>
+                        <span className={`badge-tag badge-${acc.status}`}>{acc.status}</span>
+                      </div>
+                      <div className="acc-card-title">{acc.name}</div>
+                    </div>
+                    {isActive && (
+                      <span className="tag" style={{ background: "var(--blue)", color: "#fff", fontWeight: 700 }}>
+                        Đang chọn
+                      </span>
+                    )}
+                  </div>
+
+                  {/* Metrics */}
+                  <div className="acc-metrics-row">
+                    <div>
+                      <span>Vốn ban đầu</span>
+                      <b className="mono">${acc.balance.toLocaleString()}</b>
+                    </div>
+                    <div>
+                      <span>Số dư hiện tại</span>
+                      <b className="mono">${curBal.toLocaleString()}</b>
+                    </div>
+                    <div>
+                      <span>Lãi / Lỗ</span>
+                      <b className={`mono ${netPnl >= 0 ? "up" : "dn"}`}>
+                        {netPnl >= 0 ? "+" : ""}${netPnl.toFixed(0)} ({pnlPct >= 0 ? "+" : ""}{pnlPct.toFixed(1)}%)
+                      </b>
+                    </div>
+                  </div>
+
+                  {/* Progress Bars */}
+                  <div className="acc-progress-list">
+                    {/* Target */}
+                    <div className="acc-progress-item">
+                      <div className="acc-progress-label">
+                        <span style={{ color: "var(--mut)" }}>Mục tiêu lợi nhuận (Target)</span>
+                        <span className="mono">
+                          ${Math.max(0, netPnl).toFixed(0)} / ${acc.target.toLocaleString()} ({targetPct.toFixed(0)}%)
+                        </span>
+                      </div>
+                      <div className="acc-progress-track">
+                        <div className="acc-progress-fill fill-target" style={{ width: `${targetPct}%` }} />
+                      </div>
+                    </div>
+
+                    {/* MLL */}
+                    <div className="acc-progress-item">
+                      <div className="acc-progress-label">
+                        <span style={{ color: "var(--mut)" }}>Giới hạn lỗ tối đa (MLL)</span>
+                        <span className="mono" style={{ color: mllBuffer < acc.mll * 0.3 ? "var(--dn)" : "inherit" }}>
+                          Còn buffer: ${mllBuffer.toFixed(0)} / ${acc.mll.toLocaleString()}
+                        </span>
+                      </div>
+                      <div className="acc-progress-track">
+                        <div className="acc-progress-fill fill-mll" style={{ width: `${mllPctUsed}%` }} />
+                      </div>
+                    </div>
+
+                    {/* MDL */}
+                    <div className="acc-progress-item">
+                      <div className="acc-progress-label">
+                        <span style={{ color: "var(--mut)" }}>Lỗ tối đa ngày (MDL)</span>
+                        <span className="mono" style={{ color: mdlBuffer < acc.mdl * 0.3 ? "var(--dn)" : "inherit" }}>
+                          Hôm nay còn: ${mdlBuffer.toFixed(0)} / ${acc.mdl.toLocaleString()}
+                        </span>
+                      </div>
+                      <div className="acc-progress-track">
+                        <div className="acc-progress-fill fill-mdl" style={{ width: `${mdlPctUsed}%` }} />
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Futures Funded Consistency Box */}
+                  {acc.accountType === "futures" && acc.status === "funded" && (
+                    <div className="acc-consistency-box">
+                      <div className="acc-consistency-box-header">
+                        <span>Quy tắc Consistency ({acc.consistencyPct || 50}%)</span>
+                        <span className={consistency.isConsistent ? "up" : "dn"}>
+                          {consistency.consistencyPct.toFixed(1)}% / {consistency.maxAllowedPct}%
+                        </span>
+                      </div>
+                      <div className="sub-title">
+                        Ngày lời cao nhất: ${consistency.maxDayProfit.toFixed(0)} / ${consistency.totalPositiveProfit.toFixed(0)} tổng lãi.
+                      </div>
+                      <div className={`acc-consistency-status ${consistency.isConsistent ? "up" : "dn"}`}>
+                        {consistency.isConsistent
+                          ? "Đạt chuẩn nhất quán (Dưới ngưỡng cho phép)."
+                          : `Cảnh báo: Ngày lớn nhất chiếm ${consistency.consistencyPct.toFixed(1)}% (> ${consistency.maxAllowedPct}%). Cần thêm ngày giao dịch để cân bằng.`}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* CFD Phase Table */}
+                  {acc.accountType === "cfd" && acc.cfdPhases && acc.cfdPhases.length > 0 && (
+                    <div className="acc-phase-box">
+                      <div className="acc-phase-box-title">
+                        Tiến độ các vòng CFD (Đang ở Vòng {acc.currentPhase || 1})
+                      </div>
+                      <table className="acc-phase-table">
+                        <thead>
+                          <tr>
+                            <th>Vòng thi</th>
+                            <th>Target %</th>
+                            <th>MDL %</th>
+                            <th>MLL %</th>
+                            <th>Trạng thái</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {acc.cfdPhases.map((ph) => {
+                            const isCurrent = (acc.currentPhase || 1) === ph.phase;
+                            const isPast = (acc.currentPhase || 1) > ph.phase;
+                            return (
+                              <tr key={ph.phase} className={isCurrent ? "active-phase" : ""}>
+                                <td>{ph.name}</td>
+                                <td className="mono">{ph.targetPct > 0 ? `+${ph.targetPct}%` : "Funded Live"}</td>
+                                <td className="mono">{ph.mdlPct}%</td>
+                                <td className="mono">{ph.mllPct}%</td>
+                                <td>
+                                  {isCurrent ? (
+                                    <span className="tag" style={{ background: "var(--blue)", color: "#fff" }}>Đang thi</span>
+                                  ) : isPast ? (
+                                    <span className="tag" style={{ background: "var(--up-bg)", color: "var(--up)" }}>Đã qua</span>
+                                  ) : (
+                                    <span className="sub-title">Chưa tới</span>
+                                  )}
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+
+                  {/* Footer Buttons */}
+                  <div className="acc-card-footer">
+                    <div>
+                      {!isActive && (
+                        <button
+                          className="btn primary"
+                          onClick={() => handleSelectActiveAccount(acc.id)}
+                        >
+                          Chọn giao dịch
+                        </button>
+                      )}
+                    </div>
+                    <div style={{ display: "flex", gap: "8px" }}>
+                      <button
+                        className="btn"
+                        onClick={() => {
+                          setEditingAccountId(acc.id);
+                          setAccForm({
+                            name: acc.name,
+                            propFirm: acc.propFirm,
+                            accountType: acc.accountType,
+                            balance: acc.balance,
+                            currentBalance: acc.currentBalance ?? acc.balance,
+                            mll: acc.mll,
+                            mdl: acc.mdl,
+                            target: acc.target,
+                            status: acc.status,
+                            consistencyPct: acc.consistencyPct ?? 50,
+                            currentPhase: acc.currentPhase ?? 1,
+                            cfdPhases: acc.cfdPhases && acc.cfdPhases.length > 0 ? acc.cfdPhases : [
+                              { phase: 1, name: "Vòng 1 (Challenge)", targetPct: 8, mdlPct: 5, mllPct: 10 },
+                              { phase: 2, name: "Vòng 2 (Verification)", targetPct: 5, mdlPct: 5, mllPct: 10 },
+                              { phase: 3, name: "Funded Live", targetPct: 0, mdlPct: 5, mllPct: 10 },
+                            ],
+                          });
+                          setAccModalOpen(true);
+                        }}
+                      >
+                        Sửa
+                      </button>
+                      <button
+                        className="btn danger"
+                        onClick={() => handleDeleteAccount(acc.id)}
+                      >
+                        Xóa
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       {/* TAB 2: CHECKLIST */}
       {tab === "check" && (
         <div>
@@ -502,18 +976,28 @@ export default function Home() {
               <small>Còn {Math.max(0, cfg.maxT - todayTrades.length)} lệnh cho phép</small>
             </div>
             <div className="stat-card">
-              <span>Rủi ro mỗi lệnh</span>
-              <b>{cfg.risk}%</b>
-              <small>≈ ${(cfg.bal * cfg.risk / 100).toFixed(0)}</small>
+              <span>Tài khoản ({activeAcc?.propFirm.toUpperCase()})</span>
+              <b style={{ fontSize: 16 }}>{activeAcc?.name || "Mặc định"}</b>
+              <small>Vốn: ${(activeAcc?.balance || cfg.bal).toLocaleString()}</small>
             </div>
             <div className="stat-card">
-              <span>Kết quả ngày (R)</span>
-              <b className={todayR < 0 ? "dn" : "up"}>{todayR.toFixed(1)}R</b>
-              <small>Khóa giao dịch ở -{cfg.maxL}R</small>
+              <span>Lỗ tối đa ngày (MDL)</span>
+              <b className={todayPnl < 0 ? "dn" : "up"}>
+                {todayPnl >= 0 ? "+" : ""}${todayPnl.toFixed(0)}
+              </b>
+              <small>Còn buffer: ${Math.max(0, activeMdl - Math.max(0, -todayPnl)).toFixed(0)} / ${activeMdl.toLocaleString()}</small>
             </div>
             <div className="stat-card">
               <span>Trạng thái kiểm soát</span>
-              <b className={isLocked ? "dn" : "up"}>{isLocked ? "Đã khóa lệnh" : "Sẵn sàng"}</b>
+              <b className={isLocked ? "dn" : "up"}>
+                {isDailyBreached
+                  ? "Chạm MDL ngày!"
+                  : isMllBreached
+                  ? "Chạm MLL quỹ!"
+                  : isLocked
+                  ? "Đã khóa lệnh"
+                  : "Sẵn sàng"}
+              </b>
               <small>{isLocked ? "Đạt giới hạn rủi ro" : "Tuân thủ kỷ luật"}</small>
             </div>
           </div>
@@ -591,77 +1075,122 @@ export default function Home() {
               <h2>Nhật ký giao dịch</h2>
               <div className="sub-title">Toàn bộ lệnh đã ghi nhận và đồng bộ.</div>
             </div>
-            <button className="btn primary" onClick={() => setDlgOpen(true)}>
-              + Thêm lệnh mới
-            </button>
+            <div style={{ display: "flex", gap: "10px", alignItems: "center" }}>
+              <select
+                value={accFilter}
+                onChange={(e) => setAccFilter(e.target.value)}
+                style={{
+                  background: "var(--s2)",
+                  border: "1px solid var(--line)",
+                  padding: "6px 12px",
+                  borderRadius: "var(--radius-sm)",
+                  color: "var(--tx)",
+                  fontSize: 13,
+                }}
+              >
+                <option value="all">Tất cả tài khoản ({trades.length})</option>
+                {accounts.map((a) => (
+                  <option key={a.id} value={a.id}>
+                    {a.name} ({trades.filter((t) => t.accountId === a.id).length} lệnh)
+                  </option>
+                ))}
+              </select>
+              <button className="btn primary" onClick={() => setDlgOpen(true)}>
+                + Thêm lệnh mới
+              </button>
+            </div>
           </div>
 
-          {!trades.length ? (
-            <div style={{ textAlign: "center", padding: "48px 16px", color: "var(--mut)" }}>
-              Chưa có lệnh nào được lưu. Bạn có thể thêm lệnh mới hoặc tải dữ liệu mẫu trong mục Cài đặt.
-            </div>
-          ) : (
-            <div className="table-scroll">
-              <table>
-                <thead>
-                  <tr>
-                    <th>Mã Lệnh</th>
-                    <th>Cặp / HĐ</th>
-                    <th>Vị thế</th>
-                    <th>Phiên & Setup</th>
-                    <th>Entry / SL / TP / Exit</th>
-                    <th>Kết quả ($ & R)</th>
-                    <th>Kỷ luật</th>
-                    <th></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {trades.slice().reverse().map((t) => {
-                    const sess = SES.find((s) => s.id === t.sess) || SES[4];
-                    return (
-                      <tr key={t.id}>
-                        <td>
-                          <b className="mono">{t.id}</b>
-                          <div className="sub-title">{new Date(t.time).toLocaleString("vi-VN")}</div>
-                        </td>
-                        <td>
-                          <b>{t.pair}</b> <span className="tag">{t.ctr} hđ</span>
-                        </td>
-                        <td className={t.side > 0 ? "up" : "dn"}>
-                          <b>{t.side > 0 ? "Mua (Long)" : "Bán (Short)"}</b>
-                        </td>
-                        <td>
-                          <div>{sess.n}</div>
-                          <div className="sub-title">{t.setup}</div>
-                        </td>
-                        <td className="mono sub-title" style={{ fontSize: "12px" }}>
-                          V: {t.entry} | SL: {t.sl}
-                          <br />
-                          TP: {t.tp} | Thoát: {t.exit}
-                        </td>
-                        <td>
-                          <b className={`mono ${t.r >= 0 ? "up" : "dn"}`}>{fmtR(t.r)}</b>
-                          <div className="mono sub-title">${t.pnl.toFixed(0)}</div>
-                        </td>
-                        <td>
-                          {t.disc ? (
-                            <span className="tag" style={{ background: "var(--up-bg)", color: "var(--up)" }}>Đúng chuẩn</span>
-                          ) : (
-                            <span className="tag" style={{ background: "var(--dn-bg)", color: "var(--dn)" }}>Vi phạm</span>
-                          )}
-                        </td>
-                        <td>
-                          <button className="btn danger" onClick={() => handleDeleteTrade(t.id)}>
-                            Xóa
-                          </button>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          )}
+          {(() => {
+            const filteredTrades = accFilter === "all"
+              ? trades
+              : trades.filter((t) => t.accountId === accFilter);
+
+            if (!filteredTrades.length) {
+              return (
+                <div style={{ textAlign: "center", padding: "48px 16px", color: "var(--mut)" }}>
+                  Chưa có lệnh nào cho tài khoản này. Bạn có thể thêm lệnh mới hoặc tải dữ liệu mẫu trong mục Cài đặt.
+                </div>
+              );
+            }
+
+            return (
+              <div className="table-scroll">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Mã Lệnh</th>
+                      <th>Tài khoản</th>
+                      <th>Cặp / HĐ</th>
+                      <th>Vị thế</th>
+                      <th>Phiên & Setup</th>
+                      <th>Entry / SL / TP / Exit</th>
+                      <th>Kết quả ($ & R)</th>
+                      <th>Kỷ luật</th>
+                      <th></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredTrades.slice().reverse().map((t) => {
+                      const sess = SES.find((s) => s.id === t.sess) || SES[4];
+                      const tradeAcc = accounts.find((a) => a.id === t.accountId);
+                      return (
+                        <tr key={t.id}>
+                          <td>
+                            <b className="mono">{t.id}</b>
+                            <div className="sub-title">{new Date(t.time).toLocaleString("vi-VN")}</div>
+                          </td>
+                          <td>
+                            {tradeAcc ? (
+                              <div>
+                                <span className={`badge-tag badge-${tradeAcc.accountType}`} style={{ marginRight: 4 }}>
+                                  {tradeAcc.propFirm}
+                                </span>
+                                <span style={{ fontSize: 12, fontWeight: 600 }}>{tradeAcc.name}</span>
+                              </div>
+                            ) : (
+                              <span className="sub-title">Mặc định</span>
+                            )}
+                          </td>
+                          <td>
+                            <b>{t.pair}</b> <span className="tag">{t.ctr} hđ</span>
+                          </td>
+                          <td className={t.side > 0 ? "up" : "dn"}>
+                            <b>{t.side > 0 ? "Mua (Long)" : "Bán (Short)"}</b>
+                          </td>
+                          <td>
+                            <div>{sess.n}</div>
+                            <div className="sub-title">{t.setup}</div>
+                          </td>
+                          <td className="mono sub-title" style={{ fontSize: "12px" }}>
+                            V: {t.entry} | SL: {t.sl}
+                            <br />
+                            TP: {t.tp} | Thoát: {t.exit}
+                          </td>
+                          <td>
+                            <b className={`mono ${t.r >= 0 ? "up" : "dn"}`}>{fmtR(t.r)}</b>
+                            <div className="mono sub-title">${t.pnl.toFixed(0)}</div>
+                          </td>
+                          <td>
+                            {t.disc ? (
+                              <span className="tag" style={{ background: "var(--up-bg)", color: "var(--up)" }}>Đúng chuẩn</span>
+                            ) : (
+                              <span className="tag" style={{ background: "var(--dn-bg)", color: "var(--dn)" }}>Vi phạm</span>
+                            )}
+                          </td>
+                          <td>
+                            <button className="btn danger" onClick={() => handleDeleteTrade(t.id)}>
+                              Xóa
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            );
+          })()}
         </div>
       )}
 
@@ -1031,6 +1560,23 @@ export default function Home() {
               <button className="btn" onClick={() => setDlgOpen(false)}>Đóng</button>
             </div>
 
+            {/* Account Selector */}
+            {accounts.length > 0 && (
+              <div style={{ marginBottom: "12px" }}>
+                <label>Tài khoản giao dịch</label>
+                <select
+                  value={tradeFormAccId || activeAccountId}
+                  onChange={(e) => setTradeFormAccId(e.target.value)}
+                >
+                  {accounts.map((a) => (
+                    <option key={a.id} value={a.id}>
+                      {a.name} ({a.propFirm.toUpperCase()} - {a.accountType.toUpperCase()} - {a.status.toUpperCase()})
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+
             <div style={{ marginBottom: "12px" }}>
               <label>Cặp giao dịch</label>
               <input
@@ -1183,6 +1729,258 @@ export default function Home() {
             <div style={{ display: "flex", justifyContent: "flex-end", gap: "10px" }}>
               <button className="btn" onClick={() => setDlgOpen(false)}>Hủy</button>
               <button className="btn primary" onClick={handleSaveTrade}>Lưu vào nhật ký</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ACCOUNT MODAL (CREATE / EDIT PROP ACCOUNT) */}
+      {accModalOpen && (
+        <div className="modal-overlay" onClick={() => setAccModalOpen(false)}>
+          <div className="modal-content" style={{ maxWidth: "620px" }} onClick={(e) => e.stopPropagation()}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
+              <h2 style={{ margin: 0 }}>
+                {editingAccountId ? "Chỉnh sửa tài khoản quỹ" : "Thêm tài khoản quỹ mới"}
+              </h2>
+              <button className="btn" onClick={() => setAccModalOpen(false)}>Đóng</button>
+            </div>
+
+            {/* Presets if creating new */}
+            {!editingAccountId && (
+              <div style={{ marginBottom: "14px" }}>
+                <label>Chọn nhanh từ mẫu (Presets)</label>
+                <select
+                  defaultValue="-1"
+                  onChange={(e) => {
+                    const idx = Number(e.target.value);
+                    if (idx >= 0) handleSelectPreset(idx);
+                  }}
+                >
+                  <option value="-1">-- Tự cấu hình riêng (Custom) --</option>
+                  {PROP_PRESETS.map((p, idx) => (
+                    <option key={idx} value={idx}>
+                      {p.label} ({p.type.toUpperCase()} · Vốn ${p.balance.toLocaleString()} · MLL ${p.mll} · MDL ${p.mdl})
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+
+            <div className="form-grid">
+              <div>
+                <label>Tên tài khoản</label>
+                <input
+                  value={accForm.name}
+                  onChange={(e) => setAccForm({ ...accForm, name: e.target.value })}
+                  placeholder="Ví dụ: Topstep 50K Combine #1"
+                />
+              </div>
+              <div>
+                <label>Quỹ tài trợ (Prop Firm)</label>
+                <select
+                  value={accForm.propFirm}
+                  onChange={(e) => setAccForm({ ...accForm, propFirm: e.target.value as PropFirm })}
+                >
+                  <option value="topstep">Topstep (Futures)</option>
+                  <option value="bulenox">Bulenox (Futures)</option>
+                  <option value="the5ers">The5ers (CFD)</option>
+                  <option value="other">Quỹ khác</option>
+                </select>
+              </div>
+            </div>
+
+            <div className="form-grid">
+              <div>
+                <label>Loại tài khoản</label>
+                <select
+                  value={accForm.accountType}
+                  onChange={(e) => setAccForm({ ...accForm, accountType: e.target.value as AccountType })}
+                >
+                  <option value="futures">Futures</option>
+                  <option value="cfd">CFD</option>
+                </select>
+              </div>
+              <div>
+                <label>Trạng thái</label>
+                <select
+                  value={accForm.status}
+                  onChange={(e) => setAccForm({ ...accForm, status: e.target.value as AccountStatus })}
+                >
+                  <option value="eval">Đang thi (Evaluation)</option>
+                  <option value="funded">Funded Live (Đã cấp vốn)</option>
+                  <option value="passed">Đã đậu vòng (Passed)</option>
+                  <option value="breached">Vi phạm quy tắc (Breached)</option>
+                </select>
+              </div>
+            </div>
+
+            <div className="form-grid">
+              <div>
+                <label>Kích thước tài khoản ban đầu ($)</label>
+                <input
+                  type="number"
+                  value={accForm.balance}
+                  onChange={(e) => setAccForm({ ...accForm, balance: Number(e.target.value) || 0 })}
+                />
+              </div>
+              <div>
+                <label>Mục tiêu lợi nhuận Target ($)</label>
+                <input
+                  type="number"
+                  value={accForm.target}
+                  onChange={(e) => setAccForm({ ...accForm, target: Number(e.target.value) || 0 })}
+                />
+              </div>
+            </div>
+
+            <div className="form-grid">
+              <div>
+                <label>Giới hạn lỗ tối đa MLL ($)</label>
+                <input
+                  type="number"
+                  value={accForm.mll}
+                  onChange={(e) => setAccForm({ ...accForm, mll: Number(e.target.value) || 0 })}
+                />
+              </div>
+              <div>
+                <label>Giới hạn lỗ tối đa trong ngày MDL ($)</label>
+                <input
+                  type="number"
+                  value={accForm.mdl}
+                  onChange={(e) => setAccForm({ ...accForm, mdl: Number(e.target.value) || 0 })}
+                />
+              </div>
+            </div>
+
+            {/* Futures Funded Consistency Settings */}
+            {accForm.accountType === "futures" && (
+              <div style={{ background: "var(--s2)", padding: "12px", borderRadius: "var(--radius-sm)", marginBottom: "14px", border: "1px solid var(--line)" }}>
+                <div style={{ fontWeight: 700, marginBottom: "4px" }}>
+                  Mốc Consistency Rule (Nhất quán)
+                </div>
+                <div className="sub-title" style={{ marginBottom: "10px" }}>
+                  Áp dụng cho tài khoản Funded: Không được để 1 ngày giao dịch có lợi nhuận vượt quá % tổng lợi nhuận (Topstep thường là 50%, Bulenox 40%).
+                </div>
+                <div style={{ display: "flex", gap: "10px", alignItems: "center" }}>
+                  <label style={{ margin: 0, whiteSpace: "nowrap" }}>Mốc giới hạn (%):</label>
+                  <input
+                    type="number"
+                    style={{ width: "100px" }}
+                    value={accForm.consistencyPct}
+                    onChange={(e) => setAccForm({ ...accForm, consistencyPct: Number(e.target.value) || 50 })}
+                  />
+                  <span className="sub-title">(Mặc định 50%)</span>
+                </div>
+              </div>
+            )}
+
+            {/* CFD Phases Configuration */}
+            {accForm.accountType === "cfd" && (
+              <div style={{ background: "var(--s2)", padding: "12px", borderRadius: "var(--radius-sm)", marginBottom: "14px", border: "1px solid var(--line)" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
+                  <div style={{ fontWeight: 700 }}>
+                    Cấu hình các mốc % Target theo từng vòng CFD
+                  </div>
+                  <button
+                    type="button"
+                    className="btn"
+                    style={{ padding: "4px 8px", fontSize: "12px" }}
+                    onClick={() => {
+                      const nextPhaseNum = accForm.cfdPhases.length + 1;
+                      setAccForm({
+                        ...accForm,
+                        cfdPhases: [
+                          ...accForm.cfdPhases,
+                          { phase: nextPhaseNum, name: `Vòng ${nextPhaseNum}`, targetPct: 5, mdlPct: 5, mllPct: 10 },
+                        ],
+                      });
+                    }}
+                  >
+                    + Thêm vòng
+                  </button>
+                </div>
+
+                <div style={{ marginBottom: "10px" }}>
+                  <label>Vòng hiện tại đang thi</label>
+                  <select
+                    value={accForm.currentPhase}
+                    onChange={(e) => setAccForm({ ...accForm, currentPhase: Number(e.target.value) || 1 })}
+                  >
+                    {accForm.cfdPhases.map((ph) => (
+                      <option key={ph.phase} value={ph.phase}>
+                        Vòng {ph.phase}: {ph.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="sub-title" style={{ marginBottom: "8px" }}>
+                  Danh sách vòng thi (Tên vòng | % Target | % MDL | % MLL):
+                </div>
+
+                {accForm.cfdPhases.map((ph, idx) => (
+                  <div key={idx} className="phase-builder-row">
+                    <input
+                      value={ph.name}
+                      placeholder="Tên vòng"
+                      onChange={(e) => {
+                        const updated = [...accForm.cfdPhases];
+                        updated[idx].name = e.target.value;
+                        setAccForm({ ...accForm, cfdPhases: updated });
+                      }}
+                    />
+                    <input
+                      type="number"
+                      placeholder="Target %"
+                      value={ph.targetPct}
+                      onChange={(e) => {
+                        const updated = [...accForm.cfdPhases];
+                        updated[idx].targetPct = Number(e.target.value) || 0;
+                        setAccForm({ ...accForm, cfdPhases: updated });
+                      }}
+                    />
+                    <input
+                      type="number"
+                      placeholder="MDL %"
+                      value={ph.mdlPct}
+                      onChange={(e) => {
+                        const updated = [...accForm.cfdPhases];
+                        updated[idx].mdlPct = Number(e.target.value) || 0;
+                        setAccForm({ ...accForm, cfdPhases: updated });
+                      }}
+                    />
+                    <input
+                      type="number"
+                      placeholder="MLL %"
+                      value={ph.mllPct}
+                      onChange={(e) => {
+                        const updated = [...accForm.cfdPhases];
+                        updated[idx].mllPct = Number(e.target.value) || 0;
+                        setAccForm({ ...accForm, cfdPhases: updated });
+                      }}
+                    />
+                    <button
+                      type="button"
+                      className="btn danger"
+                      style={{ padding: "4px 8px", fontSize: "12px" }}
+                      disabled={accForm.cfdPhases.length <= 1}
+                      onClick={() => {
+                        const updated = accForm.cfdPhases.filter((_, i) => i !== idx);
+                        setAccForm({ ...accForm, cfdPhases: updated });
+                      }}
+                    >
+                      Xóa
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: "10px", marginTop: "16px" }}>
+              <button className="btn" onClick={() => setAccModalOpen(false)}>Hủy</button>
+              <button className="btn primary" onClick={handleSaveAccount}>
+                {editingAccountId ? "Lưu thay đổi" : "Tạo tài khoản"}
+              </button>
             </div>
           </div>
         </div>

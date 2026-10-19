@@ -830,6 +830,283 @@ input:focus, select:focus, textarea:focus {
   border: 1px solid var(--acc);
 }
 
+/* ==========================================
+   PROP FIRM ACCOUNTS STYLING
+   ========================================== */
+.account-header-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: var(--s1);
+  border: 1px solid var(--line);
+  padding: 6px 12px;
+  border-radius: var(--radius-md);
+  font-size: 13px;
+}
+
+.account-header-bar select {
+  background: var(--s2);
+  border: 1px solid var(--line);
+  color: var(--tx);
+  padding: 5px 10px;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  max-width: 200px;
+}
+
+.badge-tag {
+  display: inline-block;
+  padding: 2px 7px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.badge-futures {
+  background: rgba(59, 130, 246, 0.15);
+  color: var(--blue);
+  border: 1px solid rgba(59, 130, 246, 0.3);
+}
+
+.badge-cfd {
+  background: rgba(168, 85, 247, 0.15);
+  color: #a855f7;
+  border: 1px solid rgba(168, 85, 247, 0.3);
+}
+
+.badge-eval {
+  background: var(--accb);
+  color: var(--acc);
+  border: 1px solid rgba(245, 158, 11, 0.3);
+}
+
+.badge-funded {
+  background: var(--up-bg);
+  color: var(--up);
+  border: 1px solid rgba(16, 185, 129, 0.3);
+}
+
+.badge-passed {
+  background: rgba(14, 165, 233, 0.15);
+  color: #0ea5e9;
+  border: 1px solid rgba(14, 165, 233, 0.3);
+}
+
+.badge-breached {
+  background: var(--dn-bg);
+  color: var(--dn);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+}
+
+/* Account Grid */
+.acc-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+  gap: 16px;
+  margin-top: 16px;
+}
+
+.acc-card {
+  background: var(--s1);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  position: relative;
+  transition: all 0.2s ease;
+}
+
+.acc-card:hover {
+  border-color: var(--s3);
+  transform: translateY(-2px);
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.2);
+}
+
+.acc-card.is-active {
+  border-color: var(--blue);
+  box-shadow: 0 0 0 1px var(--blue), 0 8px 24px rgba(59, 130, 246, 0.15);
+}
+
+.acc-card-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.acc-card-title {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--tx);
+  margin-bottom: 4px;
+}
+
+.acc-firm-label {
+  font-size: 11px;
+  color: var(--mut);
+  text-transform: uppercase;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+}
+
+.acc-metrics-row {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  background: var(--s2);
+  border-radius: var(--radius-sm);
+  padding: 10px;
+  border: 1px solid var(--line);
+  text-align: center;
+}
+
+.acc-metrics-row span {
+  display: block;
+  font-size: 10px;
+  color: var(--mut);
+  text-transform: uppercase;
+  margin-bottom: 2px;
+}
+
+.acc-metrics-row b {
+  font-size: 14px;
+  font-family: var(--font-mono);
+}
+
+/* Progress bar items */
+.acc-progress-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.acc-progress-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.acc-progress-label {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+}
+
+.acc-progress-track {
+  width: 100%;
+  height: 6px;
+  background: var(--s3);
+  border-radius: 99px;
+  overflow: hidden;
+}
+
+.acc-progress-fill {
+  height: 100%;
+  border-radius: 99px;
+  transition: width 0.3s ease;
+}
+
+.fill-target {
+  background: var(--up);
+}
+
+.fill-mdl {
+  background: var(--acc);
+}
+
+.fill-mll {
+  background: var(--dn);
+}
+
+/* Consistency box for Futures Funded */
+.acc-consistency-box {
+  background: var(--s2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  font-size: 11px;
+}
+
+.acc-consistency-box-header {
+  display: flex;
+  justify-content: space-between;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.acc-consistency-status {
+  margin-top: 4px;
+  font-size: 11px;
+}
+
+/* CFD Phase Table */
+.acc-phase-box {
+  background: var(--s2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+}
+
+.acc-phase-box-title {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--mut);
+  text-transform: uppercase;
+  margin-bottom: 6px;
+}
+
+.acc-phase-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+}
+
+.acc-phase-table th,
+.acc-phase-table td {
+  padding: 4px 6px;
+  text-align: left;
+  border-bottom: 1px solid var(--line-light);
+}
+
+.acc-phase-table th {
+  color: var(--mut);
+  font-weight: 600;
+}
+
+.acc-phase-table tr.active-phase {
+  background: rgba(59, 130, 246, 0.12);
+  font-weight: 700;
+}
+
+.acc-card-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding-top: 10px;
+  border-top: 1px solid var(--line-light);
+  gap: 8px;
+}
+
+/* Phase builder inside Modal */
+.phase-builder-row {
+  display: grid;
+  grid-template-columns: 2fr 1fr 1fr 1fr auto;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.phase-builder-row input {
+  padding: 6px 8px;
+  font-size: 12px;
+}
+
 @media (max-width: 768px) {
   .app-container {
     padding: 16px 12px 60px;
@@ -849,5 +1126,9 @@ input:focus, select:focus, textarea:focus {
   }
   .cal-trade-count {
     display: none;
+  }
+  .phase-builder-row {
+    grid-template-columns: 1fr;
+    gap: 6px;
   }
 }

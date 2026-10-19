@@ -1,11 +1,31 @@
 -- ========================================================
--- ICT MACRO RADAR - SUPABASE SCHEMA SETUP
+-- ICT MACRO RADAR - SUPABASE SCHEMA SETUP (MULTI-PROP ACCOUNTS)
 -- Chạy đoạn script này trong SQL Editor của Supabase
 -- ========================================================
 
--- 1. Bảng lưu trữ lệnh giao dịch (trades)
+-- 1. Bảng quản lý tài khoản quỹ (accounts)
+CREATE TABLE IF NOT EXISTS public.accounts (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  prop_firm TEXT NOT NULL,      -- 'topstep' | 'bulenox' | 'the5ers' | 'other'
+  account_type TEXT NOT NULL,   -- 'futures' | 'cfd'
+  balance NUMERIC NOT NULL DEFAULT 50000,
+  current_balance NUMERIC NOT NULL DEFAULT 50000,
+  mll NUMERIC NOT NULL DEFAULT 2000,   -- Maximum Loss Limit / Trailing Drawdown ($)
+  mdl NUMERIC NOT NULL DEFAULT 1000,   -- Maximum Daily Loss ($)
+  target NUMERIC NOT NULL DEFAULT 3000, -- Profit Target ($)
+  status TEXT NOT NULL DEFAULT 'eval', -- 'eval' | 'funded' | 'passed' | 'breached'
+  consistency_pct NUMERIC DEFAULT 50,  -- Dành cho Futures Funded (mốc % consistency rule)
+  current_phase INTEGER DEFAULT 1,     -- Vòng hiện tại dành cho CFD (1, 2, 3...)
+  cfd_phases JSONB DEFAULT '[]'::jsonb, -- Danh sách mốc % target theo từng vòng CFD
+  created_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now()) NOT NULL,
+  updated_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now()) NOT NULL
+);
+
+-- 2. Bảng lưu trữ lệnh giao dịch (trades) - gắn với account_id
 CREATE TABLE IF NOT EXISTS public.trades (
   id TEXT PRIMARY KEY,
+  account_id TEXT REFERENCES public.accounts(id) ON DELETE SET NULL,
   pair TEXT NOT NULL,
   pv NUMERIC NOT NULL DEFAULT 2,
   side INTEGER NOT NULL DEFAULT 1, -- 1: Long, -1: Short
@@ -25,9 +45,21 @@ CREATE TABLE IF NOT EXISTS public.trades (
   created_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now()) NOT NULL
 );
 
--- 2. Bảng cấu hình quản lý vốn & quy tắc (user_config)
+-- Bổ sung cột account_id nếu bảng trades đã tồn tại từ trước
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns 
+    WHERE table_name='trades' AND column_name='account_id'
+  ) THEN
+    ALTER TABLE public.trades ADD COLUMN account_id TEXT REFERENCES public.accounts(id) ON DELETE SET NULL;
+  END IF;
+END $$;
+
+-- 3. Bảng cấu hình quản lý vốn & quy tắc chung (user_config)
 CREATE TABLE IF NOT EXISTS public.user_config (
   id TEXT PRIMARY KEY DEFAULT 'default',
+  active_account_id TEXT,
   bal NUMERIC NOT NULL DEFAULT 50000,
   risk NUMERIC NOT NULL DEFAULT 0.5,
   max_t INTEGER NOT NULL DEFAULT 3,
@@ -35,17 +67,54 @@ CREATE TABLE IF NOT EXISTS public.user_config (
   updated_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now()) NOT NULL
 );
 
--- 3. Tạo cấu hình mặc định ban đầu nếu chưa có
-INSERT INTO public.user_config (id, bal, risk, max_t, max_l)
-VALUES ('default', 50000, 0.5, 3, 2.0)
-ON CONFLICT (id) DO NOTHING;
-
--- 4. Kích hoạt Row Level Security (RLS) & cấp quyền đọc/ghi công khai (hoặc theo auth)
+-- 4. Kích hoạt Row Level Security (RLS) & cấp quyền truy cập
+ALTER TABLE public.accounts ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.trades ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.user_config ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS "Cho phép truy cập accounts công khai" ON public.accounts;
+CREATE POLICY "Cho phép truy cập accounts công khai" ON public.accounts
+  FOR ALL USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Cho phép truy cập trades công khai" ON public.trades;
 CREATE POLICY "Cho phép truy cập trades công khai" ON public.trades
   FOR ALL USING (true) WITH CHECK (true);
 
+DROP POLICY IF EXISTS "Cho phép truy cập user_config công khai" ON public.user_config;
 CREATE POLICY "Cho phép truy cập user_config công khai" ON public.user_config
   FOR ALL USING (true) WITH CHECK (true);
+
+-- 5. Tạo dữ liệu tài khoản mẫu mặc định
+INSERT INTO public.accounts (id, name, prop_firm, account_type, balance, current_balance, mll, mdl, target, status, consistency_pct, current_phase, cfd_phases)
+VALUES 
+(
+  'ACC-TOPSTEP-50K', 
+  'Topstep 50K Combine', 
+  'topstep', 
+  'futures', 
+  50000, 
+  50000, 
+  2000, 
+  1000, 
+  3000, 
+  'eval', 
+  50, 
+  1, 
+  '[]'::jsonb
+),
+(
+  'ACC-THE5ERS-100K', 
+  'The5ers 100K High Stakes', 
+  'the5ers', 
+  'cfd', 
+  100000, 
+  100000, 
+  10000, 
+  5000, 
+  8000, 
+  'eval', 
+  0, 
+  1, 
+  '[{"phase": 1, "name": "Vòng 1 (Challenge)", "targetPct": 8, "mdlPct": 5, "mllPct": 10}, {"phase": 2, "name": "Vòng 2 (Verification)", "targetPct": 5, "mdlPct": 5, "mllPct": 10}, {"phase": 3, "name": "Funded Account", "targetPct": 0, "mdlPct": 5, "mllPct": 10}]'::jsonb
+)
+ON CONFLICT (id) DO NOTHING;

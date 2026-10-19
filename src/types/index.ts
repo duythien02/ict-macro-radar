@@ -1,3 +1,38 @@
+export type AccountType = "futures" | "cfd";
+export type PropFirm = "topstep" | "bulenox" | "the5ers" | "other";
+export type AccountStatus = "eval" | "funded" | "passed" | "breached";
+
+export interface CFDPhase {
+  phase: number;
+  name: string;
+  targetPct: number; // e.g. 8%
+  mdlPct: number;    // e.g. 5%
+  mllPct: number;    // e.g. 10%
+}
+
+export interface PropAccount {
+  id: string;
+  name: string;
+  propFirm: PropFirm;
+  accountType: AccountType;
+  balance: number;        // Kích thước tài khoản ban đầu ($)
+  currentBalance?: number;// Số dư hiện tại ($)
+  mll: number;            // Max Loss Limit / Trailing Drawdown ($)
+  mdl: number;            // Max Daily Loss ($)
+  target: number;         // Profit Target ($)
+  status: AccountStatus;  // 'eval' | 'funded' | 'passed' | 'breached'
+
+  // Mốc consistency (Dành cho Futures Funded, ví dụ 50% rule)
+  consistencyPct?: number;
+
+  // Dành riêng cho CFD (ví dụ The5ers theo từng vòng):
+  currentPhase?: number;
+  cfdPhases?: CFDPhase[];
+
+  createdAt?: string;
+  updatedAt?: string;
+}
+
 export interface MacroSession {
   id: string;
   n: string;
@@ -10,6 +45,7 @@ export interface MacroSession {
 
 export interface Trade {
   id: string;
+  accountId?: string; // Gắn lệnh với tài khoản quỹ cụ thể
   pair: string;
   pv: number;
   side: number; // 1 for Long, -1 for Short
@@ -29,6 +65,7 @@ export interface Trade {
 }
 
 export interface AppConfig {
+  activeAccountId?: string;
   bal: number;
   risk: number;
   maxT: number;
