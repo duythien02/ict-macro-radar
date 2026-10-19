@@ -39,61 +39,7 @@ export const SETUPS = [
   "Judas Swing + Breaker Block"
 ];
 
-export const DEFAULT_ACCOUNTS: PropAccount[] = [
-  {
-    id: "acc_topstep_50k",
-    name: "Topstep 50K Combine",
-    propFirm: "topstep",
-    accountType: "futures",
-    balance: 50000,
-    currentBalance: 50000,
-    mll: 2000,
-    mdl: 1000,
-    target: 3000,
-    status: "eval",
-    consistencyPct: 50,
-    riskPct: 0.5,
-    maxTradesDaily: 3,
-    maxLossRDaily: 2,
-  },
-  {
-    id: "acc_the5ers_100k",
-    name: "The5ers 100K High Stakes",
-    propFirm: "the5ers",
-    accountType: "cfd",
-    balance: 100000,
-    currentBalance: 100000,
-    mll: 10000,
-    mdl: 5000,
-    target: 8000,
-    status: "eval",
-    currentPhase: 1,
-    riskPct: 0.5,
-    maxTradesDaily: 3,
-    maxLossRDaily: 2,
-    cfdPhases: [
-      { phase: 1, name: "Vòng 1 (Challenge)", targetPct: 8, mdlPct: 5, mllPct: 10 },
-      { phase: 2, name: "Vòng 2 (Verification)", targetPct: 5, mdlPct: 5, mllPct: 10 },
-      { phase: 3, name: "Funded Live", targetPct: 0, mdlPct: 5, mllPct: 10 },
-    ],
-  },
-  {
-    id: "acc_bulenox_50k",
-    name: "Bulenox 50K Master",
-    propFirm: "bulenox",
-    accountType: "futures",
-    balance: 50000,
-    currentBalance: 50000,
-    mll: 2500,
-    mdl: 1500,
-    target: 3000,
-    status: "funded",
-    consistencyPct: 40,
-    riskPct: 0.5,
-    maxTradesDaily: 3,
-    maxLossRDaily: 2,
-  },
-];
+export const DEFAULT_ACCOUNTS: PropAccount[] = [];
 
 export const PROP_PRESETS = [
   {
@@ -222,11 +168,6 @@ CREATE TABLE IF NOT EXISTS public.users (
   created_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now()) NOT NULL,
   last_login_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now()) NOT NULL
 );
-
--- Tạo người dùng mặc định ban đầu
-INSERT INTO public.users (nickname, display_name)
-VALUES ('demo_trader', 'Demo Trader')
-ON CONFLICT (nickname) DO NOTHING;
 
 -- 2. Bảng quản lý tài khoản quỹ (accounts) - gắn với user_nickname
 CREATE TABLE IF NOT EXISTS public.accounts (
@@ -362,50 +303,7 @@ DROP POLICY IF EXISTS "Cho phép truy cập user_config công khai" ON public.us
 CREATE POLICY "Cho phép truy cập user_config công khai" ON public.user_config
   FOR ALL USING (true) WITH CHECK (true);
 
--- 6. Tạo dữ liệu tài khoản mẫu mặc định cho demo_trader
-INSERT INTO public.accounts (id, user_nickname, name, prop_firm, account_type, balance, current_balance, mll, mdl, target, status, consistency_pct, current_phase, cfd_phases, risk_pct, max_trades_daily, max_loss_r_daily)
-VALUES 
-(
-  'ACC-TOPSTEP-50K', 
-  'demo_trader',
-  'Topstep 50K Combine', 
-  'topstep', 
-  'futures', 
-  50000, 
-  50000, 
-  2000, 
-  1000, 
-  3000, 
-  'eval', 
-  50, 
-  1, 
-  '[]'::jsonb,
-  0.5,
-  3,
-  2
-),
-(
-  'ACC-THE5ERS-100K', 
-  'demo_trader',
-  'The5ers 100K High Stakes', 
-  'the5ers', 
-  'cfd', 
-  100000, 
-  100000, 
-  10000, 
-  5000, 
-  8000, 
-  'eval', 
-  0, 
-  1, 
-  '[{"phase": 1, "name": "Vòng 1 (Challenge)", "targetPct": 8, "mdlPct": 5, "mllPct": 10}, {"phase": 2, "name": "Vòng 2 (Verification)", "targetPct": 5, "mdlPct": 5, "mllPct": 10}, {"phase": 3, "name": "Funded Account", "targetPct": 0, "mdlPct": 5, "mllPct": 10}]'::jsonb,
-  0.5,
-  3,
-  2
-)
-ON CONFLICT (id) DO NOTHING;
-
--- 7. Làm mới bộ nhớ đệm PostgREST Schema Cache để nhận diện ngay các bảng mới
+-- 6. Làm mới bộ nhớ đệm PostgREST Schema Cache để nhận diện ngay các bảng mới
 NOTIFY pgrst, 'reload schema';
 `;
 

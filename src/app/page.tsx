@@ -33,8 +33,8 @@ export default function Home() {
   const [initNickInput, setInitNickInput] = useState("trader_real");
   const [initPresetIdx, setInitPresetIdx] = useState(0);
 
-  // User Profile state
-  const [activeUser, setActiveUser] = useState<UserProfile>({ nickname: "demo_trader", displayName: "Demo Trader" });
+  // User Profile state (Null until authenticated with real database)
+  const [activeUser, setActiveUser] = useState<UserProfile | null>(null);
   const [recentUsers, setRecentUsers] = useState<UserProfile[]>([]);
   const [userModalOpen, setUserModalOpen] = useState(false);
   const [loginNickInput, setLoginNickInput] = useState("");
@@ -149,8 +149,9 @@ export default function Home() {
     saveSupabaseCredentials(sbUrlInput, sbKeyInput);
     const health = await runDbHealthCheck(sbUrlInput, sbKeyInput);
     if (health.allTablesReady) {
-      alert("Kết nối Database thành công! Tất cả 4 bảng (users, accounts, trades, user_config) đã sẵn sàng.");
-      await loadUserData(activeUser.nickname);
+      if (activeUser?.nickname) {
+        await loadUserData(activeUser.nickname);
+      }
     } else {
       alert(
         `Kết nối được nhưng CSDL còn thiếu bảng: ${health.missingTables.join(", ")}.\nVui lòng bấm 'Sao chép toàn bộ mã SQL' và chạy trong Supabase SQL Editor!`
@@ -211,6 +212,7 @@ export default function Home() {
 
   // Load User Data helper
   const loadUserData = async (nickname: string, displayName?: string) => {
+    if (!nickname) return;
     const userProfile = await registerOrLoginUser(nickname, displayName);
     setActiveUser(userProfile);
 
@@ -251,11 +253,36 @@ export default function Home() {
       document.documentElement.setAttribute("data-theme", "dark");
     }
 
-    // Run Database Health Check & load real data
+    // 1. Dọn dẹp mock data cũ (demo_trader & DEFAULT_ACCOUNTS) khỏi LocalStorage nếu còn sót
+    if (typeof window !== "undefined") {
+      const storedNick = localStorage.getItem("ict_active_user");
+      if (storedNick === "demo_trader") {
+        localStorage.removeItem("ict_active_user");
+        localStorage.removeItem("ict_accounts");
+        localStorage.removeItem("ict_recent_users");
+      }
+    }
+
+    // 2. Chạy kiểm tra CSDL thật và tải dữ liệu thật
     runDbHealthCheck().then(async (health) => {
-      const savedNick = localStorage.getItem("ict_active_user") || "demo_trader";
       if (health.allTablesReady) {
-        await loadUserData(savedNick);
+        const existingUsers = await fetchUsers();
+        setRecentUsers(existingUsers);
+
+        const savedNick = typeof window !== "undefined" ? localStorage.getItem("ict_active_user") : null;
+
+        if (savedNick && existingUsers.some((u) => u.nickname === savedNick)) {
+          await loadUserData(savedNick);
+        } else if (existingUsers.length > 0) {
+          await loadUserData(existingUsers[0].nickname);
+        } else {
+          // Hoàn toàn chưa có người dùng nào trong CSDL thật!
+          setActiveUser(null);
+          setAccounts([]);
+          setTrades([]);
+          // Mở modal để người dùng khởi tạo Nickname của mình
+          setUserModalOpen(true);
+        }
       } else {
         setDbModalOpen(true);
       }
@@ -461,11 +488,18 @@ export default function Home() {
     setTradeFormAccId(id);
     const newCfg = { ...cfg, activeAccountId: id };
     setCfg(newCfg);
-    await saveConfig(newCfg, activeUser.nickname);
+    if (activeUser?.nickname) {
+      await saveConfig(newCfg, activeUser.nickname);
+    }
   };
 
   // Save Account (Create or Update)
   const handleSaveAccount = async () => {
+    if (!activeUser?.nickname) {
+      alert("Vui lòng khởi tạo Nickname người dùng trước khi tạo tài khoản quỹ!");
+      setUserModalOpen(true);
+      return;
+    }
     if (!accForm.name.trim()) {
       alert("Vui lòng nhập tên tài khoản!");
       return;
@@ -510,6 +544,12 @@ export default function Home() {
     if (!dbHealth?.allTablesReady) {
       alert("Hệ thống chưa kết nối dữ liệu thật với Database Supabase!\nVui lòng hoàn tất khởi tạo Database trước khi giao dịch.");
       setDbModalOpen(true);
+      return;
+    }
+
+    if (!activeUser?.nickname) {
+      alert("Chưa có thông tin người dùng trong CSDL thật!\nVui lòng khởi tạo Nickname của bạn trước khi vào lệnh.");
+      setUserModalOpen(true);
       return;
     }
 
@@ -603,7 +643,7 @@ export default function Home() {
 
     const newTrade: Trade = {
       id: `TRD-${400 + trades.length + 1}`,
-      userNickname: activeUser.nickname,
+      userNickname: activeUser ? activeUser.nickname : "trader",
       accountId: targetAccId,
       pair: tradeForm.pair.toUpperCase(),
       pv: tradeForm.pv,
@@ -739,7 +779,7 @@ export default function Home() {
         </div>
 
         {/* Prop Account Quick Switcher */}
-        {accounts.length > 0 && (
+        {accounts.length > 0 ? (
           <div className="account-header-bar">
             <div>
               <span style={{ fontSize: 11, color: "var(--mut)", display: "block", marginBottom: 2 }}>Tài khoản đang chọn:</span>
@@ -764,29 +804,49 @@ export default function Home() {
               </div>
             )}
           </div>
+        ) : (
+          <div
+            className="account-header-bar"
+            style={{ cursor: "pointer", borderStyle: "dashed" }}
+            onClick={() => {
+              if (!activeUser) {
+                setUserModalOpen(true);
+              } else {
+                setTab("prop");
+                setEditingAccountId(null);
+                handleSelectPreset(0);
+                setAccModalOpen(true);
+              }
+            }}
+            title="Bấm để khởi tạo tài khoản quỹ đầu tiên"
+          >
+            <span style={{ fontSize: 11, color: "var(--mut)" }}>Quỹ:</span>
+            <span style={{ fontSize: 12, fontWeight: 700, color: "var(--acc)" }}>+ Thêm tài khoản quỹ</span>
+          </div>
         )}
 
         {/* User Nickname Profile Pill */}
         <div
           className="user-header-pill"
           onClick={() => {
-            setLoginNickInput(activeUser.nickname);
-            setLoginNameInput(activeUser.displayName || "");
+            setLoginNickInput(activeUser?.nickname || "");
+            setLoginNameInput(activeUser?.displayName || "");
             setUserModalOpen(true);
           }}
-          title="Bấm để đổi Nickname người dùng"
+          title={activeUser ? "Bấm để đổi Nickname người dùng" : "Bấm để khởi tạo Nickname"}
+          style={{ borderColor: !activeUser ? "var(--acc)" : undefined }}
         >
-          <div className="user-avatar">
-            {activeUser.nickname.slice(0, 2).toUpperCase()}
+          <div className="user-avatar" style={{ background: !activeUser ? "var(--acc)" : undefined, color: !activeUser ? "#000" : undefined }}>
+            {activeUser ? activeUser.nickname.slice(0, 2).toUpperCase() : "?"}
           </div>
           <div>
             <span style={{ fontSize: 10, color: "var(--mut)", display: "block", lineHeight: 1.1 }}>
               Trader:
             </span>
-            <span className="user-nick-text">{activeUser.nickname}</span>
+            <span className="user-nick-text">{activeUser ? activeUser.nickname : "Chưa khởi tạo"}</span>
           </div>
-          <span className="badge-tag" style={{ background: "var(--s3)", color: "var(--mut)", marginLeft: 2, fontSize: 9 }}>
-            Đổi
+          <span className="badge-tag" style={{ background: !activeUser ? "var(--acc)" : "var(--s3)", color: !activeUser ? "#000" : "var(--mut)", marginLeft: 2, fontSize: 9 }}>
+            {activeUser ? "Đổi" : "Khởi tạo"}
           </span>
         </div>
 
@@ -1023,7 +1083,11 @@ export default function Home() {
                   Chưa có tài khoản quỹ nào
                 </div>
                 <p style={{ color: "var(--mut)", fontSize: "13px", maxWidth: "520px", margin: "0 auto 20px" }}>
-                  Tài khoản của Nickname <b>{activeUser.nickname}</b> chưa có dữ liệu tài khoản quỹ nào trong Database thật. Hãy khởi tạo tài khoản đầu tiên để bắt đầu theo dõi MLL, MDL và Target.
+                  {activeUser ? (
+                    <>Tài khoản của Nickname <b>{activeUser.nickname}</b> chưa có dữ liệu tài khoản quỹ nào trong Database thật. Hãy thêm tài khoản đầu tiên để bắt đầu theo dõi MLL, MDL và Target.</>
+                  ) : (
+                    <>CSDL thật chưa có tài khoản quỹ nào. Vui lòng khởi tạo Nickname trước khi tạo tài khoản quỹ.</>
+                  )}
                 </p>
                 <div style={{ display: "flex", gap: "10px", justifyContent: "center", flexWrap: "wrap" }}>
                   <button
@@ -1911,7 +1975,9 @@ export default function Home() {
                   if (typeof window !== "undefined") {
                     localStorage.setItem("ictm", JSON.stringify({ trades, cfg }));
                   }
-                  await saveConfig(cfg, activeUser.nickname);
+                  if (activeUser?.nickname) {
+                    await saveConfig(cfg, activeUser.nickname);
+                  }
                   alert("Đã lưu cấu hình rủi ro tài khoản quỹ thành công!");
                 }}
               >
@@ -2464,12 +2530,16 @@ export default function Home() {
             onClick={(e) => e.stopPropagation()}
           >
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
-              <h2 style={{ margin: 0 }}>Đăng nhập Nickname</h2>
-              <button className="btn" onClick={() => setUserModalOpen(false)}>Đóng</button>
+              <h2 style={{ margin: 0 }}>
+                {activeUser ? "Đổi Nickname Người Dùng" : "Khởi tạo Nickname Người Dùng"}
+              </h2>
+              {activeUser && <button className="btn" onClick={() => setUserModalOpen(false)}>Đóng</button>}
             </div>
 
             <div className="sub-title" style={{ marginBottom: "16px" }}>
-              Mỗi Nickname sẽ sở hữu các tài khoản quỹ (Prop Firm) và nhật ký giao dịch hoàn toàn riêng biệt.
+              {activeUser
+                ? "Mỗi Nickname sẽ sở hữu các tài khoản quỹ (Prop Firm) và nhật ký giao dịch hoàn toàn riêng biệt."
+                : "Hệ thống CSDL thật chưa có thông tin người dùng. Vui lòng nhập Nickname của bạn để bắt đầu khởi tạo tài khoản trên CSDL thật."}
             </div>
 
             <div style={{ marginBottom: "12px" }}>
@@ -2502,14 +2572,14 @@ export default function Home() {
                     <button
                       key={u.nickname}
                       type="button"
-                      className={`user-chip ${u.nickname === activeUser.nickname ? "active" : ""}`}
+                      className={`user-chip ${u.nickname === activeUser?.nickname ? "active" : ""}`}
                       onClick={() => handleSwitchUser(u.nickname, u.displayName)}
                     >
                       <span>{u.nickname}</span>
                       {u.displayName && u.displayName !== u.nickname && (
                         <span style={{ fontSize: 10, color: "var(--mut)" }}>({u.displayName})</span>
                       )}
-                      {u.nickname === activeUser.nickname && (
+                      {u.nickname === activeUser?.nickname && (
                         <span className="badge-tag badge-funded" style={{ fontSize: 9 }}>Đang dùng</span>
                       )}
                     </button>
@@ -2519,12 +2589,12 @@ export default function Home() {
             )}
 
             <div style={{ display: "flex", justifyContent: "flex-end", gap: "10px" }}>
-              <button className="btn" onClick={() => setUserModalOpen(false)}>Hủy</button>
+              {activeUser && <button className="btn" onClick={() => setUserModalOpen(false)}>Hủy</button>}
               <button
                 className="btn primary"
                 onClick={() => handleSwitchUser(loginNickInput, loginNameInput)}
               >
-                Đăng nhập / Tiếp tục
+                {activeUser ? "Đăng nhập / Chuyển Nickname" : "Khởi tạo Nickname & Bắt đầu"}
               </button>
             </div>
           </div>

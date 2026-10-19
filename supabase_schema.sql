@@ -11,11 +11,6 @@ CREATE TABLE IF NOT EXISTS public.users (
   last_login_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now()) NOT NULL
 );
 
--- Tạo người dùng mặc định ban đầu
-INSERT INTO public.users (nickname, display_name)
-VALUES ('demo_trader', 'Demo Trader')
-ON CONFLICT (nickname) DO NOTHING;
-
 -- 2. Bảng quản lý tài khoản quỹ (accounts) - gắn với user_nickname
 CREATE TABLE IF NOT EXISTS public.accounts (
   id TEXT PRIMARY KEY,
@@ -150,42 +145,5 @@ DROP POLICY IF EXISTS "Cho phép truy cập user_config công khai" ON public.us
 CREATE POLICY "Cho phép truy cập user_config công khai" ON public.user_config
   FOR ALL USING (true) WITH CHECK (true);
 
--- 6. Tạo dữ liệu tài khoản mẫu mặc định cho demo_trader
-INSERT INTO public.accounts (id, user_nickname, name, prop_firm, account_type, balance, current_balance, mll, mdl, target, status, consistency_pct, current_phase, cfd_phases)
-VALUES 
-(
-  'ACC-TOPSTEP-50K', 
-  'demo_trader',
-  'Topstep 50K Combine', 
-  'topstep', 
-  'futures', 
-  50000, 
-  50000, 
-  2000, 
-  1000, 
-  3000, 
-  'eval', 
-  50, 
-  1, 
-  '[]'::jsonb
-),
-(
-  'ACC-THE5ERS-100K', 
-  'demo_trader',
-  'The5ers 100K High Stakes', 
-  'the5ers', 
-  'cfd', 
-  100000, 
-  100000, 
-  10000, 
-  5000, 
-  8000, 
-  'eval', 
-  0, 
-  1, 
-  '[{"phase": 1, "name": "Vòng 1 (Challenge)", "targetPct": 8, "mdlPct": 5, "mllPct": 10}, {"phase": 2, "name": "Vòng 2 (Verification)", "targetPct": 5, "mdlPct": 5, "mllPct": 10}, {"phase": 3, "name": "Funded Account", "targetPct": 0, "mdlPct": 5, "mllPct": 10}]'::jsonb
-)
-ON CONFLICT (id) DO NOTHING;
-
--- 7. Làm mới bộ nhớ đệm PostgREST Schema Cache để nhận diện ngay các bảng mới
+-- 6. Làm mới bộ nhớ đệm PostgREST Schema Cache để nhận diện ngay các bảng mới
 NOTIFY pgrst, 'reload schema';

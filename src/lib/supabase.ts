@@ -1,6 +1,5 @@
 import { createClient, SupabaseClient } from "@supabase/supabase-js";
 import { Trade, AppConfig, PropAccount, UserProfile } from "@/types";
-import { DEFAULT_ACCOUNTS } from "@/lib/constants";
 
 let cachedClient: SupabaseClient | null = null;
 let cachedUrl = "";
@@ -177,7 +176,7 @@ export async function fetchUsers(): Promise<UserProfile[]> {
   if (sb) {
     try {
       const { data, error } = await sb.from("users").select("*").order("last_login_at", { ascending: false });
-      if (!error && data && data.length > 0) {
+      if (!error && data) {
         return data.map((d: any) => ({
           nickname: d.nickname,
           displayName: d.display_name,
@@ -198,11 +197,14 @@ export async function fetchUsers(): Promise<UserProfile[]> {
     } catch {}
   }
 
-  return [{ nickname: "demo_trader", displayName: "Demo Trader" }];
+  return [];
 }
 
 export async function registerOrLoginUser(nickname: string, displayName?: string): Promise<UserProfile> {
-  const cleanNick = nickname.trim().toLowerCase().replace(/[^a-z0-9_-]/g, "") || "demo_trader";
+  const cleanNick = nickname.trim().toLowerCase().replace(/[^a-z0-9_-]/g, "");
+  if (!cleanNick) {
+    throw new Error("Nickname không hợp lệ");
+  }
   const name = displayName?.trim() || cleanNick;
   const userObj: UserProfile = {
     nickname: cleanNick,
@@ -241,7 +243,9 @@ export async function registerOrLoginUser(nickname: string, displayName?: string
 // ==========================================
 // ACCOUNTS OPERATIONS (PER USER NICKNAME)
 // ==========================================
-export async function fetchAccounts(userNickname = "demo_trader"): Promise<PropAccount[]> {
+export async function fetchAccounts(userNickname?: string): Promise<PropAccount[]> {
+  if (!userNickname) return [];
+
   const sb = getSupabase();
   if (sb) {
     try {
@@ -251,7 +255,7 @@ export async function fetchAccounts(userNickname = "demo_trader"): Promise<PropA
         .eq("user_nickname", userNickname)
         .order("created_at", { ascending: true });
 
-      if (!error && data && data.length > 0) {
+      if (!error && data) {
         return data.map((d: any) => ({
           id: d.id,
           userNickname: d.user_nickname,
@@ -286,15 +290,9 @@ export async function fetchAccounts(userNickname = "demo_trader"): Promise<PropA
       if (local) {
         const parsed = JSON.parse(local);
         if (Array.isArray(parsed)) {
-          const userAccounts = parsed.filter((a) => (a.userNickname || "demo_trader") === userNickname);
+          const userAccounts = parsed.filter((a) => a.userNickname === userNickname);
           if (userAccounts.length > 0) return userAccounts;
         }
-      }
-      // If demo_trader and first time, seed default accounts
-      if (userNickname === "demo_trader") {
-        const seeded = DEFAULT_ACCOUNTS.map((a) => ({ ...a, userNickname: "demo_trader" }));
-        localStorage.setItem("ict_accounts", JSON.stringify(seeded));
-        return seeded;
       }
     } catch {}
   }
