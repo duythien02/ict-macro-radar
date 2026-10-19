@@ -781,8 +781,8 @@ export default function Home() {
         {/* Prop Account Quick Switcher */}
         {accounts.length > 0 ? (
           <div className="account-header-bar">
-            <div>
-              <span style={{ fontSize: 11, color: "var(--mut)", display: "block", marginBottom: 2 }}>Tài khoản đang chọn:</span>
+            <span className="acc-header-label">Tài khoản đang chọn:</span>
+            <div className="acc-header-controls">
               <select
                 value={activeAccountId}
                 onChange={(e) => handleSelectActiveAccount(e.target.value)}
@@ -793,21 +793,20 @@ export default function Home() {
                   </option>
                 ))}
               </select>
+              {activeAcc && (
+                <div className="acc-header-badges">
+                  <span className={`badge-tag badge-${activeAcc.accountType}`}>{activeAcc.accountType}</span>
+                  <span className={`badge-tag badge-${activeAcc.status}`}>{activeAcc.status}</span>
+                  <span className="mono acc-header-balance">
+                    ${(curAccBalance).toLocaleString()}
+                  </span>
+                </div>
+              )}
             </div>
-            {activeAcc && (
-              <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
-                <span className={`badge-tag badge-${activeAcc.accountType}`}>{activeAcc.accountType}</span>
-                <span className={`badge-tag badge-${activeAcc.status}`}>{activeAcc.status}</span>
-                <span className="mono" style={{ fontWeight: 700, marginLeft: 4 }}>
-                  ${(curAccBalance).toLocaleString()}
-                </span>
-              </div>
-            )}
           </div>
         ) : (
           <div
-            className="account-header-bar"
-            style={{ cursor: "pointer", borderStyle: "dashed" }}
+            className="account-header-bar empty"
             onClick={() => {
               if (!activeUser) {
                 setUserModalOpen(true);
@@ -820,7 +819,7 @@ export default function Home() {
             }}
             title="Bấm để khởi tạo tài khoản quỹ đầu tiên"
           >
-            <span style={{ fontSize: 11, color: "var(--mut)" }}>Quỹ:</span>
+            <span className="acc-header-label">Quỹ:</span>
             <span style={{ fontSize: 12, fontWeight: 700, color: "var(--acc)" }}>+ Thêm tài khoản quỹ</span>
           </div>
         )}

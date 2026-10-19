@@ -352,9 +352,28 @@ export async function insertAccount(acc: PropAccount): Promise<boolean> {
         updated_at: new Date().toISOString(),
       };
       const { error } = await sb.from("accounts").upsert(row);
-      if (error) console.error("Lỗi lưu account Supabase:", error);
-    } catch (e) {
-      console.error("Supabase insertAccount error:", e);
+      if (error) {
+        const errorMsg = error.message || error.details || error.hint || (typeof error === "object" ? JSON.stringify(error) : String(error));
+        console.warn("Lỗi lưu account Supabase (đầy đủ):", errorMsg);
+        // Fallback tối giản nếu CSDL cũ chưa kịp chạy SQL migration
+        const fallbackRow = {
+          id: accWithUser.id,
+          name: accWithUser.name,
+          prop_firm: accWithUser.propFirm,
+          account_type: accWithUser.accountType,
+          balance: accWithUser.balance,
+          mll: accWithUser.mll,
+          mdl: accWithUser.mdl,
+          target: accWithUser.target,
+          status: accWithUser.status,
+        };
+        const fbRes = await sb.from("accounts").upsert(fallbackRow);
+        if (fbRes.error) {
+          console.warn("Lỗi lưu account Supabase (tối giản):", fbRes.error.message || fbRes.error.details || fbRes.error);
+        }
+      }
+    } catch (e: any) {
+      console.warn("Supabase insertAccount catch error:", e?.message || e);
     }
   }
 

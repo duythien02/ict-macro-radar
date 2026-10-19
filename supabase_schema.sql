@@ -41,7 +41,35 @@ BEGIN
     SELECT 1 FROM information_schema.columns 
     WHERE table_name='accounts' AND column_name='user_nickname'
   ) THEN
-    ALTER TABLE public.accounts ADD COLUMN user_nickname TEXT NOT NULL DEFAULT 'demo_trader';
+    ALTER TABLE public.accounts ADD COLUMN user_nickname TEXT NOT NULL DEFAULT 'trader';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns 
+    WHERE table_name='accounts' AND column_name='current_balance'
+  ) THEN
+    ALTER TABLE public.accounts ADD COLUMN current_balance NUMERIC NOT NULL DEFAULT 50000;
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns 
+    WHERE table_name='accounts' AND column_name='consistency_pct'
+  ) THEN
+    ALTER TABLE public.accounts ADD COLUMN consistency_pct NUMERIC DEFAULT 50;
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns 
+    WHERE table_name='accounts' AND column_name='current_phase'
+  ) THEN
+    ALTER TABLE public.accounts ADD COLUMN current_phase INTEGER DEFAULT 1;
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns 
+    WHERE table_name='accounts' AND column_name='cfd_phases'
+  ) THEN
+    ALTER TABLE public.accounts ADD COLUMN cfd_phases JSONB DEFAULT '[]'::jsonb;
   END IF;
 
   IF NOT EXISTS (
@@ -63,6 +91,13 @@ BEGIN
     WHERE table_name='accounts' AND column_name='max_loss_r_daily'
   ) THEN
     ALTER TABLE public.accounts ADD COLUMN max_loss_r_daily NUMERIC DEFAULT 2;
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns 
+    WHERE table_name='accounts' AND column_name='updated_at'
+  ) THEN
+    ALTER TABLE public.accounts ADD COLUMN updated_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now()) NOT NULL;
   END IF;
 END $$;
 
