@@ -874,204 +874,203 @@ export default function Home() {
       <header>
         <div className="header-top-row">
           <div className="logo-wrap">
-          <img src="/logo.png" alt="ICT Macro Radar Logo" className="brand-logo" />
-          <div className="title-group">
-            <h1>ICT Macro Radar</h1>
-            <div className="sub-title">{clocks.seasonTxt}</div>
+            <img src="/logo.png" alt="ICT Macro Radar Logo" className="brand-logo" />
+            <div className="title-group">
+              <h1>ICT Macro Radar</h1>
+              <div className="sub-title">{clocks.seasonTxt}</div>
+            </div>
+          </div>
+
+          {/* Prop Account Quick Switcher */}
+          {accounts.length > 0 ? (
+            <div className="account-header-bar">
+              <span className="acc-header-label">Tài khoản đang chọn:</span>
+              <div className="acc-header-controls">
+                <select
+                  value={activeAccountId}
+                  onChange={(e) => handleSelectActiveAccount(e.target.value)}
+                >
+                  {accounts.map((acc) => (
+                    <option key={acc.id} value={acc.id}>
+                      {acc.name} ({acc.propFirm.toUpperCase()} - {acc.accountType.toUpperCase()})
+                    </option>
+                  ))}
+                </select>
+                {activeAcc && (
+                  <div className="acc-header-badges">
+                    <span className={`badge-tag badge-${activeAcc.accountType}`}>{activeAcc.accountType}</span>
+                    <span className={`badge-tag badge-${activeAcc.status}`}>{activeAcc.status}</span>
+                    <span className="mono acc-header-balance">
+                      ${(curAccBalance).toLocaleString()}
+                    </span>
+                  </div>
+                )}
+              </div>
+            </div>
+          ) : (
+            <div
+              className="account-header-bar empty"
+              onClick={() => {
+                if (!activeUser) {
+                  handleOpenAuthModal("login");
+                } else {
+                  setTab("prop");
+                  setEditingAccountId(null);
+                  handleSelectPreset(0);
+                  setAccModalOpen(true);
+                }
+              }}
+              title="Bấm để khởi tạo tài khoản quỹ đầu tiên"
+            >
+              <span className="acc-header-label">Quỹ:</span>
+              <span style={{ fontSize: 12, fontWeight: 700, color: "var(--acc)" }}>+ Thêm tài khoản quỹ</span>
+            </div>
+          )}
+
+          {/* User Account / Login Pill */}
+          {activeUser ? (
+            <div className="user-header-wrap">
+              <div
+                className="auth-header-badge"
+                onClick={() => handleOpenAuthModal("login", activeUser.nickname)}
+                title="Bấm để đổi tài khoản khác"
+              >
+                <div>
+                  <span style={{ fontSize: 10, color: "var(--mut)", display: "block", lineHeight: 1.1 }}>
+                    Tài khoản:
+                  </span>
+                  <span className="user-nick-text" style={{ fontWeight: 700, fontSize: 13 }}>
+                    {activeUser.displayName || activeUser.nickname}
+                  </span>
+                </div>
+                <span className="badge-tag" style={{ background: "var(--s3)", color: "var(--mut)", marginLeft: 2, fontSize: 9 }}>
+                  Đổi
+                </span>
+              </div>
+              <button
+                className="auth-logout-mini-btn"
+                onClick={handleLogout}
+                title="Đăng xuất khỏi tài khoản"
+              >
+                Đăng xuất
+              </button>
+            </div>
+          ) : (
+            <div
+              className="auth-header-badge unauthenticated"
+              onClick={() => handleOpenAuthModal("login")}
+              title="Bấm để đăng nhập hoặc tạo tài khoản"
+            >
+              <div className="user-avatar-badge" style={{ background: "linear-gradient(135deg, #f59e0b, #d97706)" }}>
+                ?
+              </div>
+              <div>
+                <span style={{ fontSize: 10, color: "var(--acc)", fontWeight: 700, display: "block", lineHeight: 1.1 }}>
+                  CHƯA ĐĂNG NHẬP
+                </span>
+                <span style={{ fontWeight: 700, fontSize: 12.5, color: "var(--tx)" }}>
+                  Đăng nhập / Đăng ký
+                </span>
+              </div>
+            </div>
+          )}
+
+
+          <div className="clocks-container" suppressHydrationWarning>
+            <div className="clk-box" suppressHydrationWarning>
+              <b suppressHydrationWarning>{mounted ? clocks.nyTxt : "--:--:--"}</b>
+              <span>New York</span>
+            </div>
+            <div className="clk-box" suppressHydrationWarning>
+              <b suppressHydrationWarning>{mounted ? clocks.vnTxt : "--:--:--"}</b>
+              <span>Việt Nam</span>
+            </div>
+            <button className="theme-toggle" onClick={toggleTheme} title="Đổi giao diện Sáng / Tối">
+              {theme === "dark" ? "Light" : "Dark"}
+            </button>
           </div>
         </div>
 
-        {/* Prop Account Quick Switcher */}
-        {accounts.length > 0 ? (
-          <div className="account-header-bar">
-            <span className="acc-header-label">Tài khoản đang chọn:</span>
-            <div className="acc-header-controls">
-              <select
-                value={activeAccountId}
-                onChange={(e) => handleSelectActiveAccount(e.target.value)}
-              >
-                {accounts.map((acc) => (
-                  <option key={acc.id} value={acc.id}>
-                    {acc.name} ({acc.propFirm.toUpperCase()} - {acc.accountType.toUpperCase()})
-                  </option>
-                ))}
-              </select>
-              {activeAcc && (
-                <div className="acc-header-badges">
-                  <span className={`badge-tag badge-${activeAcc.accountType}`}>{activeAcc.accountType}</span>
-                  <span className={`badge-tag badge-${activeAcc.status}`}>{activeAcc.status}</span>
-                  <span className="mono acc-header-balance">
-                    ${(curAccBalance).toLocaleString()}
-                  </span>
-                </div>
-              )}
-            </div>
-          </div>
-        ) : (
-          <div
-            className="account-header-bar empty"
-            onClick={() => {
-              if (!activeUser) {
-                handleOpenAuthModal("login");
-              } else {
-                setTab("prop");
-                setEditingAccountId(null);
-                handleSelectPreset(0);
-                setAccModalOpen(true);
-              }
-            }}
-            title="Bấm để khởi tạo tài khoản quỹ đầu tiên"
-          >
-            <span className="acc-header-label">Quỹ:</span>
-            <span style={{ fontSize: 12, fontWeight: 700, color: "var(--acc)" }}>+ Thêm tài khoản quỹ</span>
-          </div>
-        )}
-
-        {/* User Account / Login Pill */}
-        {activeUser ? (
-          <div className="user-header-wrap">
-            <div
-              className="auth-header-badge"
-              onClick={() => handleOpenAuthModal("login", activeUser.nickname)}
-              title="Bấm để đổi tài khoản khác"
-            >
-              <div>
-                <span style={{ fontSize: 10, color: "var(--mut)", display: "block", lineHeight: 1.1 }}>
-                  Tài khoản:
-                </span>
-                <span className="user-nick-text" style={{ fontWeight: 700, fontSize: 13 }}>
-                  {activeUser.displayName || activeUser.nickname}
+        {/* Global Macro Status Bar - Always Visible in Header */}
+        {curSess ? (
+          <div className="now-banner live header-macro-banner">
+            <div className="macro-banner-left">
+              <div className="sub-title" style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                <span className="live-dot" style={{ display: "inline-block", width: 8, height: 8, borderRadius: "50%", background: "var(--acc)", boxShadow: "0 0 8px var(--acc)" }} />
+                <span>ĐANG TRONG KHUNG MACRO</span>
+              </div>
+              <div className="macro-banner-title-row">
+                <span className="macro-sess-name">{curSess.n}</span>
+                <span className="macro-countdown-pill live" title="Thời gian còn lại của phiên Macro hiện tại">
+                  <span className="countdown-label">CÒN LẠI</span>
+                  <b className="countdown-digits" suppressHydrationWarning>
+                    {remMinutes}ph {String(remSeconds).padStart(2, "0")}s
+                  </b>
                 </span>
               </div>
-              <span className="badge-tag" style={{ background: "var(--s3)", color: "var(--mut)", marginLeft: 2, fontSize: 9 }}>
-                Đổi
-              </span>
             </div>
             <button
-              className="auth-logout-mini-btn"
-              onClick={handleLogout}
-              title="Đăng xuất khỏi tài khoản"
+              className="btn primary"
+              onClick={() => handleAttemptNewTrade(curSess.id)}
             >
-              Đăng xuất
+              + Ghi lệnh Macro
             </button>
           </div>
         ) : (
-          <div
-            className="auth-header-badge unauthenticated"
-            onClick={() => handleOpenAuthModal("login")}
-            title="Bấm để đăng nhập hoặc tạo tài khoản"
-          >
-            <div className="user-avatar-badge" style={{ background: "linear-gradient(135deg, #f59e0b, #d97706)" }}>
-              ?
+          <div className="now-banner header-macro-banner">
+            <div className="macro-banner-left">
+              <div className="sub-title">NGOÀI KHUNG MACRO - HÃY KIÊN NHẪN</div>
+              <div className="macro-banner-title-row">
+                <span className="macro-sess-name">
+                  Tiếp theo: <b>{nxtSess?.n}</b>
+                </span>
+                <span className="macro-countdown-pill waiting" title="Đếm ngược đến khung Macro tiếp theo">
+                  <span className="countdown-icon">⏳</span>
+                  <span className="countdown-label">CÒN</span>
+                  <b className="countdown-digits" suppressHydrationWarning>
+                    {waitHours > 0 ? `${waitHours}g ` : ""}{String(waitMinutes).padStart(2, "0")}ph {String(waitSeconds).padStart(2, "0")}s
+                  </b>
+                </span>
+              </div>
             </div>
-            <div>
-              <span style={{ fontSize: 10, color: "var(--acc)", fontWeight: 700, display: "block", lineHeight: 1.1 }}>
-                CHƯA ĐĂNG NHẬP
-              </span>
-              <span style={{ fontWeight: 700, fontSize: 12.5, color: "var(--tx)" }}>
-                Đăng nhập / Đăng ký
-              </span>
+            <div className="macro-banner-right">
+              <div className="macro-vn-badge">
+                <span className="sub-title" style={{ fontSize: 11, display: "block", textTransform: "uppercase" }}>Giờ bắt đầu</span>
+                <span className="mono" style={{ fontSize: 15, fontWeight: 700, color: "var(--tx)" }}>
+                  VN {hm((nxtSess?.s || 0) + clocks.off * 60)}
+                </span>
+              </div>
             </div>
           </div>
         )}
+      </header>
 
+      {/* Tabs */}
+      <nav className="tab-nav">
+        <button className={tab === "radar" ? "active" : ""} onClick={() => setTab("radar")}>
+          Radar giờ Macro
+        </button>
+        <button className={tab === "prop" ? "active" : ""} onClick={() => setTab("prop")}>
+          Tài khoản quỹ ({accounts.length})
+        </button>
+        <button className={tab === "check" ? "active" : ""} onClick={() => setTab("check")}>
+          Checklist & Kỷ luật
+        </button>
+        <button className={tab === "log" ? "active" : ""} onClick={() => setTab("log")}>
+          Nhật ký ({trades.length})
+        </button>
+        <button className={tab === "stat" ? "active" : ""} onClick={() => setTab("stat")}>
+          Hiệu suất & Lịch P&L
+        </button>
+        <button className={tab === "cfg" ? "active" : ""} onClick={() => setTab("cfg")}>
+          Cài đặt
+        </button>
+      </nav>
 
-        <div className="clocks-container" suppressHydrationWarning>
-          <div className="clk-box" suppressHydrationWarning>
-            <b suppressHydrationWarning>{mounted ? clocks.nyTxt : "--:--:--"}</b>
-            <span>New York</span>
-          </div>
-          <div className="clk-box" suppressHydrationWarning>
-            <b suppressHydrationWarning>{mounted ? clocks.vnTxt : "--:--:--"}</b>
-            <span>Việt Nam</span>
-          </div>
-          <button className="theme-toggle" onClick={toggleTheme} title="Đổi giao diện Sáng / Tối">
-            {theme === "dark" ? "Light" : "Dark"}
-          </button>
-        </div>
-      </div>
-
-      {/* Global Macro Status Bar - Always Visible in Header */}
-      {curSess ? (
-        <div className="now-banner live header-macro-banner">
-          <div className="macro-banner-left">
-            <div className="sub-title" style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-              <span className="live-dot" style={{ display: "inline-block", width: 8, height: 8, borderRadius: "50%", background: "var(--acc)", boxShadow: "0 0 8px var(--acc)" }} />
-              <span>ĐANG TRONG KHUNG MACRO</span>
-            </div>
-            <div className="macro-banner-title-row">
-              <span className="macro-sess-name">{curSess.n}</span>
-              <span className="macro-countdown-pill live" title="Thời gian còn lại của phiên Macro hiện tại">
-                <span className="countdown-icon">⚡</span>
-                <span className="countdown-label">CÒN LẠI</span>
-                <b className="countdown-digits" suppressHydrationWarning>
-                  {remMinutes}ph {String(remSeconds).padStart(2, "0")}s
-                </b>
-              </span>
-            </div>
-          </div>
-          <button
-            className="btn primary"
-            onClick={() => handleAttemptNewTrade(curSess.id)}
-          >
-            + Ghi lệnh Macro
-          </button>
-        </div>
-      ) : (
-        <div className="now-banner header-macro-banner">
-          <div className="macro-banner-left">
-            <div className="sub-title">NGOÀI KHUNG MACRO - HÃY KIÊN NHẪN</div>
-            <div className="macro-banner-title-row">
-              <span className="macro-sess-name">
-                Tiếp theo: <b>{nxtSess?.n}</b>
-              </span>
-              <span className="macro-countdown-pill waiting" title="Đếm ngược đến khung Macro tiếp theo">
-                <span className="countdown-icon">⏳</span>
-                <span className="countdown-label">CÒN</span>
-                <b className="countdown-digits" suppressHydrationWarning>
-                  {waitHours > 0 ? `${waitHours}g ` : ""}{String(waitMinutes).padStart(2, "0")}ph {String(waitSeconds).padStart(2, "0")}s
-                </b>
-              </span>
-            </div>
-          </div>
-          <div className="macro-banner-right">
-            <div className="macro-vn-badge">
-              <span className="sub-title" style={{ fontSize: 11, display: "block", textTransform: "uppercase" }}>Giờ bắt đầu</span>
-              <span className="mono" style={{ fontSize: 15, fontWeight: 700, color: "var(--tx)" }}>
-                VN {hm((nxtSess?.s || 0) + clocks.off * 60)}
-              </span>
-            </div>
-          </div>
-        </div>
-      )}
-    </header>
-
-    {/* Tabs */}
-    <nav className="tab-nav">
-      <button className={tab === "radar" ? "active" : ""} onClick={() => setTab("radar")}>
-        Radar giờ Macro
-      </button>
-      <button className={tab === "prop" ? "active" : ""} onClick={() => setTab("prop")}>
-        Tài khoản quỹ ({accounts.length})
-      </button>
-      <button className={tab === "check" ? "active" : ""} onClick={() => setTab("check")}>
-        Checklist & Kỷ luật
-      </button>
-      <button className={tab === "log" ? "active" : ""} onClick={() => setTab("log")}>
-        Nhật ký ({trades.length})
-      </button>
-      <button className={tab === "stat" ? "active" : ""} onClick={() => setTab("stat")}>
-        Hiệu suất & Lịch P&L
-      </button>
-      <button className={tab === "cfg" ? "active" : ""} onClick={() => setTab("cfg")}>
-        Cài đặt
-      </button>
-    </nav>
-
-    {/* TAB 1: RADAR */}
-    {tab === "radar" && (
-      <div>
-        {/* 24h Timeline */}
+      {/* TAB 1: RADAR */}
+      {tab === "radar" && (
+        <div>
+          {/* 24h Timeline */}
           <div className="panel">
             <h2>Dòng thời gian 24 Giờ theo Giờ Việt Nam</h2>
             <div className="sub-title">Các khối màu hổ phách là ba khung NY AM quan trọng nhất (quét thanh khoản & mở sàn).</div>
