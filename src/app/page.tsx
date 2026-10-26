@@ -846,7 +846,8 @@ export default function Home() {
     <div className="app-container">
       {/* Header */}
       <header>
-        <div className="logo-wrap">
+        <div className="header-top-row">
+          <div className="logo-wrap">
           <img src="/logo.png" alt="ICT Macro Radar Logo" className="brand-logo" />
           <div className="title-group">
             <h1>ICT Macro Radar</h1>
@@ -908,9 +909,6 @@ export default function Home() {
               onClick={() => handleOpenAuthModal("login", activeUser.nickname)}
               title="Bấm để đổi tài khoản khác"
             >
-              <div className="user-avatar-badge">
-                {activeUser.nickname.slice(0, 2).toUpperCase()}
-              </div>
               <div>
                 <span style={{ fontSize: 10, color: "var(--mut)", display: "block", lineHeight: 1.1 }}>
                   Tài khoản:
@@ -965,63 +963,68 @@ export default function Home() {
             {theme === "dark" ? "Light" : "Dark"}
           </button>
         </div>
-      </header>
+      </div>
 
-      {/* Tabs */}
-      <nav className="tab-nav">
-        <button className={tab === "radar" ? "active" : ""} onClick={() => setTab("radar")}>
-          Radar giờ Macro
-        </button>
-        <button className={tab === "prop" ? "active" : ""} onClick={() => setTab("prop")}>
-          Tài khoản quỹ ({accounts.length})
-        </button>
-        <button className={tab === "check" ? "active" : ""} onClick={() => setTab("check")}>
-          Checklist & Kỷ luật
-        </button>
-        <button className={tab === "log" ? "active" : ""} onClick={() => setTab("log")}>
-          Nhật ký ({trades.length})
-        </button>
-        <button className={tab === "stat" ? "active" : ""} onClick={() => setTab("stat")}>
-          Hiệu suất & Lịch P&L
-        </button>
-        <button className={tab === "cfg" ? "active" : ""} onClick={() => setTab("cfg")}>
-          Cài đặt
-        </button>
-      </nav>
-
-      {/* TAB 1: RADAR */}
-      {tab === "radar" && (
-        <div>
-          {curSess ? (
-            <div className="now-banner live">
-              <div>
-                <div className="sub-title">ĐANG TRONG KHUNG MACRO</div>
-                <div className="big">
-                  {curSess.n} · còn {curSess.e - clocks.nyMin} phút
-                </div>
-              </div>
-              <button
-                className="btn primary"
-                onClick={() => handleAttemptNewTrade(curSess.id)}
-              >
-                + Ghi lệnh Macro
-              </button>
+      {/* Global Macro Status Bar - Always Visible in Header */}
+      {curSess ? (
+        <div className="now-banner live header-macro-banner">
+          <div>
+            <div className="sub-title" style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+              <span className="live-dot" style={{ display: "inline-block", width: 8, height: 8, borderRadius: "50%", background: "var(--acc)", boxShadow: "0 0 8px var(--acc)" }} />
+              <span>ĐANG TRONG KHUNG MACRO</span>
             </div>
-          ) : (
-            <div className="now-banner">
-              <div>
-                <div className="sub-title">NGOÀI KHUNG MACRO - HÃY KIÊN NHẪN</div>
-                <div className="big">
-                  Tiếp theo: {nxtSess?.n} sau {Math.floor(waitMin / 60)}g {waitMin % 60}ph
-                </div>
-              </div>
-              <div className="mono sub-title" style={{ fontSize: "14px" }}>
-                VN {hm((nxtSess?.s || 0) + clocks.off * 60)}
-              </div>
+            <div className="big">
+              {curSess.n} · còn {curSess.e - clocks.nyMin} phút
             </div>
-          )}
+          </div>
+          <button
+            className="btn primary"
+            onClick={() => handleAttemptNewTrade(curSess.id)}
+          >
+            + Ghi lệnh Macro
+          </button>
+        </div>
+      ) : (
+        <div className="now-banner header-macro-banner">
+          <div>
+            <div className="sub-title">NGOÀI KHUNG MACRO - HÃY KIÊN NHẪN</div>
+            <div className="big">
+              Tiếp theo: {nxtSess?.n} sau {Math.floor(waitMin / 60)}g {waitMin % 60}ph
+            </div>
+          </div>
+          <div className="mono sub-title" style={{ fontSize: "14px", fontWeight: 600 }}>
+            VN {hm((nxtSess?.s || 0) + clocks.off * 60)}
+          </div>
+        </div>
+      )}
+    </header>
 
-          {/* 24h Timeline */}
+    {/* Tabs */}
+    <nav className="tab-nav">
+      <button className={tab === "radar" ? "active" : ""} onClick={() => setTab("radar")}>
+        Radar giờ Macro
+      </button>
+      <button className={tab === "prop" ? "active" : ""} onClick={() => setTab("prop")}>
+        Tài khoản quỹ ({accounts.length})
+      </button>
+      <button className={tab === "check" ? "active" : ""} onClick={() => setTab("check")}>
+        Checklist & Kỷ luật
+      </button>
+      <button className={tab === "log" ? "active" : ""} onClick={() => setTab("log")}>
+        Nhật ký ({trades.length})
+      </button>
+      <button className={tab === "stat" ? "active" : ""} onClick={() => setTab("stat")}>
+        Hiệu suất & Lịch P&L
+      </button>
+      <button className={tab === "cfg" ? "active" : ""} onClick={() => setTab("cfg")}>
+        Cài đặt
+      </button>
+    </nav>
+
+    {/* TAB 1: RADAR */}
+    {tab === "radar" && (
+      <div>
+        {/* 24h Timeline */}
           <div className="panel">
             <h2>Dòng thời gian 24 Giờ theo Giờ Việt Nam</h2>
             <div className="sub-title">Các khối màu hổ phách là ba khung NY AM quan trọng nhất (quét thanh khoản & mở sàn).</div>
