@@ -14,6 +14,9 @@ import {
   removeAccount,
   fetchUsers,
   registerOrLoginUser,
+  loginUser,
+  registerUser,
+  logoutUser,
   checkDatabaseHealth,
   saveSupabaseCredentials,
   DatabaseHealthStatus,
@@ -33,12 +36,18 @@ export default function Home() {
   const [initNickInput, setInitNickInput] = useState("trader_real");
   const [initPresetIdx, setInitPresetIdx] = useState(0);
 
-  // User Profile state (Null until authenticated with real database)
+  // User Authentication state
   const [activeUser, setActiveUser] = useState<UserProfile | null>(null);
   const [recentUsers, setRecentUsers] = useState<UserProfile[]>([]);
-  const [userModalOpen, setUserModalOpen] = useState(false);
-  const [loginNickInput, setLoginNickInput] = useState("");
-  const [loginNameInput, setLoginNameInput] = useState("");
+  const [authModalOpen, setAuthModalOpen] = useState(false);
+  const [authMode, setAuthMode] = useState<"login" | "register">("login");
+  const [authUsername, setAuthUsername] = useState("");
+  const [authPassword, setAuthPassword] = useState("");
+  const [authConfirmPassword, setAuthConfirmPassword] = useState("");
+  const [authDisplayName, setAuthDisplayName] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+  const [authError, setAuthError] = useState<string | null>(null);
+  const [authLoading, setAuthLoading] = useState(false);
 
   const [trades, setTrades] = useState<Trade[]>([]);
   const [accounts, setAccounts] = useState<PropAccount[]>([]);
@@ -211,18 +220,26 @@ export default function Home() {
   };
 
   // Load User Data helper
-  const loadUserData = async (nickname: string, displayName?: string) => {
+  const loadUserData = async (nickname: string) => {
     if (!nickname) return;
-    const userProfile = await registerOrLoginUser(nickname, displayName);
-    setActiveUser(userProfile);
+    const cleanNick = nickname.trim().toLowerCase().replace(/[^a-z0-9_-]/g, "");
 
+    // Get user profile info
     const loadedRecent = await fetchUsers();
     setRecentUsers(loadedRecent);
+    const existing = loadedRecent.find((u) => u.nickname === cleanNick);
+    const userProfile: UserProfile = existing || {
+      nickname: cleanNick,
+      displayName: cleanNick,
+      lastLoginAt: new Date().toISOString(),
+      hasPassword: true,
+    };
+    setActiveUser(userProfile);
 
-    const loadedAccounts = await fetchAccounts(userProfile.nickname);
+    const loadedAccounts = await fetchAccounts(cleanNick);
     setAccounts(loadedAccounts);
 
-    let loadedCfg = await fetchConfig(userProfile.nickname);
+    let loadedCfg = await fetchConfig(cleanNick);
 
     const initialActiveId = (loadedCfg.activeAccountId && loadedAccounts.some((a) => a.id === loadedCfg.activeAccountId))
       ? loadedCfg.activeAccountId
@@ -233,11 +250,11 @@ export default function Home() {
     // Đồng bộ lưu user_config vào Supabase để bảng user_config không bị trống
     if (!loadedCfg.activeAccountId && initialActiveId) {
       loadedCfg = { ...loadedCfg, activeAccountId: initialActiveId };
-      await saveConfig(loadedCfg, userProfile.nickname);
+      await saveConfig(loadedCfg, cleanNick);
     }
     setCfg(loadedCfg);
 
-    const loadedTrades = await fetchTrades(undefined, userProfile.nickname);
+    const loadedTrades = await fetchTrades(undefined, cleanNick);
     setTrades(loadedTrades);
   };
 
@@ -279,15 +296,13 @@ export default function Home() {
 
         if (savedNick && existingUsers.some((u) => u.nickname === savedNick)) {
           await loadUserData(savedNick);
-        } else if (existingUsers.length > 0) {
-          await loadUserData(existingUsers[0].nickname);
         } else {
-          // Hoàn toàn chưa có người dùng nào trong CSDL thật!
+          // Chưa đăng nhập: yêu cầu đăng nhập trước khi sử dụng
           setActiveUser(null);
           setAccounts([]);
           setTrades([]);
-          // Mở modal để người dùng khởi tạo Nickname của mình
-          setUserModalOpen(true);
+          setAuthMode(existingUsers.length > 0 ? "login" : "register");
+          setAuthModalOpen(true);
         }
       } else {
         setDbModalOpen(true);
@@ -393,7 +408,7 @@ export default function Home() {
   const activeMaxLossR = activeAcc?.maxLossRDaily ?? cfg.maxL ?? 2;
   const activeRiskPct = activeAcc?.riskPct ?? cfg.risk ?? 0.5;
 
-  const isDailyBreached = todayPnl <= -activeMdl;
+  const isDailyBreached = activeMdl > 0 ? todayPnl <= -activeMdl : false;
   const isMllBreached = activeAccNetPnl <= -activeMll;
   const isTradeLimitReached = todayTrades.length >= activeMaxTrades;
   const isLossRReached = todayR <= -activeMaxLossR;
@@ -475,17 +490,58 @@ export default function Home() {
     });
   };
 
-  // Switch User Handler
-  const handleSwitchUser = async (nickname: string, displayName?: string) => {
-    const cleanNick = nickname.trim().toLowerCase().replace(/[^a-z0-9_-]/g, "");
-    if (!cleanNick) {
-      alert("Vui lòng nhập nickname hợp lệ (chữ, số, gạch dưới)!");
-      return;
+  // Open Auth Modal helper
+  const handleOpenAuthModal = (mode: "login" | "register" = "login", prefillUser?: string) => {
+    setAuthMode(mode);
+    setAuthError(null);
+    setAuthPassword("");
+    setAuthConfirmPassword("");
+    if (prefillUser) {
+      setAuthUsername(prefillUser);
     }
-    await loadUserData(cleanNick, displayName);
-    setUserModalOpen(false);
-    setLoginNickInput("");
-    setLoginNameInput("");
+    setShowPassword(false);
+    setAuthModalOpen(true);
+  };
+
+  // Auth Form Submit (Login / Register)
+  const handleAuthSubmit = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    setAuthError(null);
+    setAuthLoading(true);
+
+    try {
+      if (authMode === "login") {
+        const user = await loginUser(authUsername, authPassword);
+        await loadUserData(user.nickname);
+        setAuthModalOpen(false);
+        setAuthPassword("");
+      } else {
+        if (authPassword !== authConfirmPassword) {
+          throw new Error("Mật khẩu xác nhận không trùng khớp!");
+        }
+        const user = await registerUser(authUsername, authPassword, authDisplayName);
+        await loadUserData(user.nickname);
+        setAuthModalOpen(false);
+        setAuthPassword("");
+        setAuthConfirmPassword("");
+      }
+    } catch (err: any) {
+      setAuthError(err?.message || "Đã xảy ra lỗi trong quá trình xác thực!");
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  // Logout Handler
+  const handleLogout = () => {
+    if (confirm("Bạn có chắc chắn muốn đăng xuất khỏi tài khoản này?")) {
+      logoutUser();
+      setActiveUser(null);
+      setAccounts([]);
+      setTrades([]);
+      setActiveAccountId("");
+      handleOpenAuthModal("login");
+    }
   };
 
   // Select Active Account Handler
@@ -502,8 +558,8 @@ export default function Home() {
   // Save Account (Create or Update)
   const handleSaveAccount = async () => {
     if (!activeUser?.nickname) {
-      alert("Vui lòng khởi tạo Nickname người dùng trước khi tạo tài khoản quỹ!");
-      setUserModalOpen(true);
+      alert("Vui lòng đăng nhập tài khoản trước khi tạo tài khoản quỹ!");
+      handleOpenAuthModal("login");
       return;
     }
     if (!accForm.name.trim()) {
@@ -568,8 +624,8 @@ export default function Home() {
     }
 
     if (!activeUser?.nickname) {
-      alert("Chưa có thông tin người dùng trong CSDL thật!\nVui lòng khởi tạo Nickname của bạn trước khi vào lệnh.");
-      setUserModalOpen(true);
+      alert("Bạn chưa đăng nhập!\nVui lòng đăng nhập tài khoản trước khi vào lệnh.");
+      handleOpenAuthModal("login");
       return;
     }
 
@@ -829,7 +885,7 @@ export default function Home() {
             className="account-header-bar empty"
             onClick={() => {
               if (!activeUser) {
-                setUserModalOpen(true);
+                handleOpenAuthModal("login");
               } else {
                 setTab("prop");
                 setEditingAccountId(null);
@@ -844,46 +900,57 @@ export default function Home() {
           </div>
         )}
 
-        {/* User Nickname Profile Pill */}
-        <div
-          className="user-header-pill"
-          onClick={() => {
-            setLoginNickInput(activeUser?.nickname || "");
-            setLoginNameInput(activeUser?.displayName || "");
-            setUserModalOpen(true);
-          }}
-          title={activeUser ? "Bấm để đổi Nickname người dùng" : "Bấm để khởi tạo Nickname"}
-          style={{ borderColor: !activeUser ? "var(--acc)" : undefined }}
-        >
-          <div className="user-avatar" style={{ background: !activeUser ? "var(--acc)" : undefined, color: !activeUser ? "#000" : undefined }}>
-            {activeUser ? activeUser.nickname.slice(0, 2).toUpperCase() : "?"}
+        {/* User Account / Login Pill */}
+        {activeUser ? (
+          <div className="user-header-wrap">
+            <div
+              className="auth-header-badge"
+              onClick={() => handleOpenAuthModal("login", activeUser.nickname)}
+              title="Bấm để đổi tài khoản khác"
+            >
+              <div className="user-avatar-badge">
+                {activeUser.nickname.slice(0, 2).toUpperCase()}
+              </div>
+              <div>
+                <span style={{ fontSize: 10, color: "var(--mut)", display: "block", lineHeight: 1.1 }}>
+                  Tài khoản:
+                </span>
+                <span className="user-nick-text" style={{ fontWeight: 700, fontSize: 13 }}>
+                  {activeUser.displayName || activeUser.nickname}
+                </span>
+              </div>
+              <span className="badge-tag" style={{ background: "var(--s3)", color: "var(--mut)", marginLeft: 2, fontSize: 9 }}>
+                Đổi
+              </span>
+            </div>
+            <button
+              className="auth-logout-mini-btn"
+              onClick={handleLogout}
+              title="Đăng xuất khỏi tài khoản"
+            >
+              Đăng xuất
+            </button>
           </div>
-          <div>
-            <span style={{ fontSize: 10, color: "var(--mut)", display: "block", lineHeight: 1.1 }}>
-              Trader:
-            </span>
-            <span className="user-nick-text">{activeUser ? activeUser.nickname : "Chưa khởi tạo"}</span>
+        ) : (
+          <div
+            className="auth-header-badge unauthenticated"
+            onClick={() => handleOpenAuthModal("login")}
+            title="Bấm để đăng nhập hoặc tạo tài khoản"
+          >
+            <div className="user-avatar-badge" style={{ background: "linear-gradient(135deg, #f59e0b, #d97706)" }}>
+              ?
+            </div>
+            <div>
+              <span style={{ fontSize: 10, color: "var(--acc)", fontWeight: 700, display: "block", lineHeight: 1.1 }}>
+                CHƯA ĐĂNG NHẬP
+              </span>
+              <span style={{ fontWeight: 700, fontSize: 12.5, color: "var(--tx)" }}>
+                Đăng nhập / Đăng ký
+              </span>
+            </div>
           </div>
-          <span className="badge-tag" style={{ background: !activeUser ? "var(--acc)" : "var(--s3)", color: !activeUser ? "#000" : "var(--mut)", marginLeft: 2, fontSize: 9 }}>
-            {activeUser ? "Đổi" : "Khởi tạo"}
-          </span>
-        </div>
+        )}
 
-        {/* Database Real Data Indicator Pill */}
-        <div
-          className={`db-header-pill ${dbHealth?.allTablesReady ? "ready" : "warning"}`}
-          onClick={() => setDbModalOpen(true)}
-          title="Bấm để kiểm tra và khởi tạo Database Supabase"
-        >
-          <span className="db-dot" />
-          <span>
-            {dbHealth?.allTablesReady
-              ? "Supabase: Dữ liệu thật"
-              : dbChecking
-              ? "Đang kiểm tra DB..."
-              : "Supabase: Cần khởi tạo"}
-          </span>
-        </div>
 
         <div className="clocks-container" suppressHydrationWarning>
           <div className="clk-box" suppressHydrationWarning>
@@ -1126,232 +1193,232 @@ export default function Home() {
               </div>
             ) : (
               accounts.map((acc) => {
-              const isActive = acc.id === activeAccountId;
-              const accTradesList = trades.filter((t) => !t.accountId || t.accountId === acc.id);
-              const netPnl = accTradesList.reduce((a, b) => a + b.pnl, 0);
-              const curBal = acc.balance + netPnl;
-              const pnlPct = acc.balance ? (netPnl / acc.balance) * 100 : 0;
+                const isActive = acc.id === activeAccountId;
+                const accTradesList = trades.filter((t) => !t.accountId || t.accountId === acc.id);
+                const netPnl = accTradesList.reduce((a, b) => a + b.pnl, 0);
+                const curBal = acc.balance + netPnl;
+                const pnlPct = acc.balance ? (netPnl / acc.balance) * 100 : 0;
 
-              // Target progress
-              const targetPct = acc.target > 0 ? Math.min(100, Math.max(0, (netPnl / acc.target) * 100)) : 0;
+                // Target progress
+                const targetPct = acc.target > 0 ? Math.min(100, Math.max(0, (netPnl / acc.target) * 100)) : 0;
 
-              // MLL buffer
-              const maxDrawdown = accTradesList.length > 0 ? Math.max(0, -netPnl) : 0;
-              const mllBuffer = Math.max(0, acc.mll - maxDrawdown);
-              const mllPctUsed = Math.min(100, (maxDrawdown / acc.mll) * 100);
+                // MLL buffer
+                const maxDrawdown = accTradesList.length > 0 ? Math.max(0, -netPnl) : 0;
+                const mllBuffer = Math.max(0, acc.mll - maxDrawdown);
+                const mllPctUsed = Math.min(100, (maxDrawdown / acc.mll) * 100);
 
-              // MDL today buffer
-              const accTodayTrades = accTradesList.filter((t) => new Date(t.time).toDateString() === todayDateStr);
-              const todayAccPnl = accTodayTrades.reduce((a, b) => a + b.pnl, 0);
-              const todayLoss = Math.max(0, -todayAccPnl);
-              const mdlBuffer = Math.max(0, acc.mdl - todayLoss);
-              const mdlPctUsed = Math.min(100, (todayLoss / acc.mdl) * 100);
+                // MDL today buffer
+                const accTodayTrades = accTradesList.filter((t) => new Date(t.time).toDateString() === todayDateStr);
+                const todayAccPnl = accTodayTrades.reduce((a, b) => a + b.pnl, 0);
+                const todayLoss = Math.max(0, -todayAccPnl);
+                const mdlBuffer = Math.max(0, acc.mdl - todayLoss);
+                const mdlPctUsed = Math.min(100, (todayLoss / acc.mdl) * 100);
 
-              // Consistency for Futures Funded
-              const consistency = getAccountConsistency(acc);
+                // Consistency for Futures Funded
+                const consistency = getAccountConsistency(acc);
 
-              return (
-                <div key={acc.id} className={`acc-card ${isActive ? "is-active" : ""}`}>
-                  <div className="acc-card-top">
-                    <div>
-                      <div style={{ display: "flex", gap: "6px", alignItems: "center", marginBottom: 6 }}>
-                        <span className="acc-firm-label">{acc.propFirm}</span>
-                        <span className={`badge-tag badge-${acc.accountType}`}>{acc.accountType}</span>
-                        <span className={`badge-tag badge-${acc.status}`}>{acc.status}</span>
+                return (
+                  <div key={acc.id} className={`acc-card ${isActive ? "is-active" : ""}`}>
+                    <div className="acc-card-top">
+                      <div>
+                        <div style={{ display: "flex", gap: "6px", alignItems: "center", marginBottom: 6 }}>
+                          <span className="acc-firm-label">{acc.propFirm}</span>
+                          <span className={`badge-tag badge-${acc.accountType}`}>{acc.accountType}</span>
+                          <span className={`badge-tag badge-${acc.status}`}>{acc.status}</span>
+                        </div>
+                        <div className="acc-card-title">{acc.name}</div>
                       </div>
-                      <div className="acc-card-title">{acc.name}</div>
-                    </div>
-                    {isActive && (
-                      <span className="tag" style={{ background: "var(--blue)", color: "#fff", fontWeight: 700 }}>
-                        Đang chọn
-                      </span>
-                    )}
-                  </div>
-
-                  {/* Metrics */}
-                  <div className="acc-metrics-row">
-                    <div>
-                      <span>Vốn ban đầu</span>
-                      <b className="mono">${acc.balance.toLocaleString()}</b>
-                    </div>
-                    <div>
-                      <span>Số dư hiện tại</span>
-                      <b className="mono">${curBal.toLocaleString()}</b>
-                    </div>
-                    <div>
-                      <span>Lãi / Lỗ</span>
-                      <b className={`mono ${netPnl >= 0 ? "up" : "dn"}`}>
-                        {netPnl >= 0 ? "+" : ""}${netPnl.toFixed(0)} ({pnlPct >= 0 ? "+" : ""}{pnlPct.toFixed(1)}%)
-                      </b>
-                    </div>
-                  </div>
-
-                  {/* Account Discipline & Risk Settings Badge */}
-                  <div style={{ background: "var(--s2)", padding: "6px 10px", borderRadius: "var(--radius-sm)", marginBottom: "12px", border: "1px solid var(--line)", fontSize: "11px", color: "var(--tx)", display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: "4px" }}>
-                    <span><b>Rủi ro:</b> {acc.riskPct || 0.5}%/lệnh (${(((acc.balance || 50000) * (acc.riskPct || 0.5)) / 100).toFixed(0)})</span>
-                    <span><b>Tối đa:</b> {acc.maxTradesDaily || 3} lệnh/ngày</span>
-                    <span><b>Max lỗ:</b> {acc.maxLossRDaily || 2}R/ngày</span>
-                  </div>
-
-                  {/* Progress Bars */}
-                  <div className="acc-progress-list">
-                    {/* Target */}
-                    <div className="acc-progress-item">
-                      <div className="acc-progress-label">
-                        <span style={{ color: "var(--mut)" }}>Mục tiêu lợi nhuận (Target)</span>
-                        <span className="mono">
-                          ${Math.max(0, netPnl).toFixed(0)} / ${acc.target.toLocaleString()} ({targetPct.toFixed(0)}%)
+                      {isActive && (
+                        <span className="tag" style={{ background: "var(--blue)", color: "#fff", fontWeight: 700 }}>
+                          Đang chọn
                         </span>
-                      </div>
-                      <div className="acc-progress-track">
-                        <div className="acc-progress-fill fill-target" style={{ width: `${targetPct}%` }} />
-                      </div>
-                    </div>
-
-                    {/* MLL */}
-                    <div className="acc-progress-item">
-                      <div className="acc-progress-label">
-                        <span style={{ color: "var(--mut)" }}>Giới hạn lỗ tối đa (MLL)</span>
-                        <span className="mono" style={{ color: mllBuffer < acc.mll * 0.3 ? "var(--dn)" : "inherit" }}>
-                          Còn buffer: ${mllBuffer.toFixed(0)} / ${acc.mll.toLocaleString()}
-                        </span>
-                      </div>
-                      <div className="acc-progress-track">
-                        <div className="acc-progress-fill fill-mll" style={{ width: `${mllPctUsed}%` }} />
-                      </div>
-                    </div>
-
-                    {/* MDL */}
-                    <div className="acc-progress-item">
-                      <div className="acc-progress-label">
-                        <span style={{ color: "var(--mut)" }}>Lỗ tối đa ngày (MDL)</span>
-                        <span className="mono" style={{ color: mdlBuffer < acc.mdl * 0.3 ? "var(--dn)" : "inherit" }}>
-                          Hôm nay còn: ${mdlBuffer.toFixed(0)} / ${acc.mdl.toLocaleString()}
-                        </span>
-                      </div>
-                      <div className="acc-progress-track">
-                        <div className="acc-progress-fill fill-mdl" style={{ width: `${mdlPctUsed}%` }} />
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Futures Funded Consistency Box */}
-                  {acc.accountType === "futures" && acc.status === "funded" && (
-                    <div className="acc-consistency-box">
-                      <div className="acc-consistency-box-header">
-                        <span>Quy tắc Consistency ({acc.consistencyPct || 50}%)</span>
-                        <span className={consistency.isConsistent ? "up" : "dn"}>
-                          {consistency.consistencyPct.toFixed(1)}% / {consistency.maxAllowedPct}%
-                        </span>
-                      </div>
-                      <div className="sub-title">
-                        Ngày lời cao nhất: ${consistency.maxDayProfit.toFixed(0)} / ${consistency.totalPositiveProfit.toFixed(0)} tổng lãi.
-                      </div>
-                      <div className={`acc-consistency-status ${consistency.isConsistent ? "up" : "dn"}`}>
-                        {consistency.isConsistent
-                          ? "Đạt chuẩn nhất quán (Dưới ngưỡng cho phép)."
-                          : `Cảnh báo: Ngày lớn nhất chiếm ${consistency.consistencyPct.toFixed(1)}% (> ${consistency.maxAllowedPct}%). Cần thêm ngày giao dịch để cân bằng.`}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* CFD Phase Table */}
-                  {acc.accountType === "cfd" && acc.cfdPhases && acc.cfdPhases.length > 0 && (
-                    <div className="acc-phase-box">
-                      <div className="acc-phase-box-title">
-                        Tiến độ các vòng CFD (Đang ở Vòng {acc.currentPhase || 1})
-                      </div>
-                      <table className="acc-phase-table">
-                        <thead>
-                          <tr>
-                            <th>Vòng thi</th>
-                            <th>Target %</th>
-                            <th>MDL %</th>
-                            <th>MLL %</th>
-                            <th>Trạng thái</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {acc.cfdPhases.map((ph) => {
-                            const isCurrent = (acc.currentPhase || 1) === ph.phase;
-                            const isPast = (acc.currentPhase || 1) > ph.phase;
-                            return (
-                              <tr key={ph.phase} className={isCurrent ? "active-phase" : ""}>
-                                <td>{ph.name}</td>
-                                <td className="mono">{ph.targetPct > 0 ? `+${ph.targetPct}%` : "Funded Live"}</td>
-                                <td className="mono">{ph.mdlPct}%</td>
-                                <td className="mono">{ph.mllPct}%</td>
-                                <td>
-                                  {isCurrent ? (
-                                    <span className="tag" style={{ background: "var(--blue)", color: "#fff" }}>Đang thi</span>
-                                  ) : isPast ? (
-                                    <span className="tag" style={{ background: "var(--up-bg)", color: "var(--up)" }}>Đã qua</span>
-                                  ) : (
-                                    <span className="sub-title">Chưa tới</span>
-                                  )}
-                                </td>
-                              </tr>
-                            );
-                          })}
-                        </tbody>
-                      </table>
-                    </div>
-                  )}
-
-                  {/* Footer Buttons */}
-                  <div className="acc-card-footer">
-                    <div>
-                      {!isActive && (
-                        <button
-                          className="btn primary"
-                          onClick={() => handleSelectActiveAccount(acc.id)}
-                        >
-                          Chọn giao dịch
-                        </button>
                       )}
                     </div>
-                    <div style={{ display: "flex", gap: "8px" }}>
-                      <button
-                        className="btn"
-                        onClick={() => {
-                          setEditingAccountId(acc.id);
-                          setAccForm({
-                            name: acc.name,
-                            propFirm: acc.propFirm,
-                            accountType: acc.accountType,
-                            balance: acc.balance,
-                            currentBalance: acc.currentBalance ?? acc.balance,
-                            mll: acc.mll,
-                            mdl: acc.mdl,
-                            target: acc.target,
-                            status: acc.status,
-                            consistencyPct: acc.consistencyPct ?? 50,
-                            riskPct: acc.riskPct ?? 0.5,
-                            maxTradesDaily: acc.maxTradesDaily ?? 3,
-                            maxLossRDaily: acc.maxLossRDaily ?? 2,
-                            currentPhase: acc.currentPhase ?? 1,
-                            cfdPhases: acc.cfdPhases && acc.cfdPhases.length > 0 ? acc.cfdPhases : [
-                              { phase: 1, name: "Vòng 1 (Challenge)", targetPct: 8, mdlPct: 5, mllPct: 10 },
-                              { phase: 2, name: "Vòng 2 (Verification)", targetPct: 5, mdlPct: 5, mllPct: 10 },
-                              { phase: 3, name: "Funded Live", targetPct: 0, mdlPct: 5, mllPct: 10 },
-                            ],
-                          });
-                          setAccModalOpen(true);
-                        }}
-                      >
-                        Sửa
-                      </button>
-                      <button
-                        className="btn danger"
-                        onClick={() => handleDeleteAccount(acc.id)}
-                      >
-                        Xóa
-                      </button>
+
+                    {/* Metrics */}
+                    <div className="acc-metrics-row">
+                      <div>
+                        <span>Vốn ban đầu</span>
+                        <b className="mono">${acc.balance.toLocaleString()}</b>
+                      </div>
+                      <div>
+                        <span>Số dư hiện tại</span>
+                        <b className="mono">${curBal.toLocaleString()}</b>
+                      </div>
+                      <div>
+                        <span>Lãi / Lỗ</span>
+                        <b className={`mono ${netPnl >= 0 ? "up" : "dn"}`}>
+                          {netPnl >= 0 ? "+" : ""}${netPnl.toFixed(0)} ({pnlPct >= 0 ? "+" : ""}{pnlPct.toFixed(1)}%)
+                        </b>
+                      </div>
+                    </div>
+
+                    {/* Account Discipline & Risk Settings Badge */}
+                    <div style={{ background: "var(--s2)", padding: "6px 10px", borderRadius: "var(--radius-sm)", marginBottom: "12px", border: "1px solid var(--line)", fontSize: "11px", color: "var(--tx)", display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: "4px" }}>
+                      <span><b>Rủi ro:</b> {acc.riskPct || 0.5}%/lệnh (${(((acc.balance || 50000) * (acc.riskPct || 0.5)) / 100).toFixed(0)})</span>
+                      <span><b>Tối đa:</b> {acc.maxTradesDaily || 3} lệnh/ngày</span>
+                      <span><b>Max lỗ:</b> {acc.maxLossRDaily || 2}R/ngày</span>
+                    </div>
+
+                    {/* Progress Bars */}
+                    <div className="acc-progress-list">
+                      {/* Target */}
+                      <div className="acc-progress-item">
+                        <div className="acc-progress-label">
+                          <span style={{ color: "var(--mut)" }}>Mục tiêu lợi nhuận (Target)</span>
+                          <span className="mono">
+                            ${Math.max(0, netPnl).toFixed(0)} / ${acc.target.toLocaleString()} ({targetPct.toFixed(0)}%)
+                          </span>
+                        </div>
+                        <div className="acc-progress-track">
+                          <div className="acc-progress-fill fill-target" style={{ width: `${targetPct}%` }} />
+                        </div>
+                      </div>
+
+                      {/* MLL */}
+                      <div className="acc-progress-item">
+                        <div className="acc-progress-label">
+                          <span style={{ color: "var(--mut)" }}>Giới hạn lỗ tối đa (MLL)</span>
+                          <span className="mono" style={{ color: mllBuffer < acc.mll * 0.3 ? "var(--dn)" : "inherit" }}>
+                            Còn buffer: ${mllBuffer.toFixed(0)} / ${acc.mll.toLocaleString()}
+                          </span>
+                        </div>
+                        <div className="acc-progress-track">
+                          <div className="acc-progress-fill fill-mll" style={{ width: `${mllPctUsed}%` }} />
+                        </div>
+                      </div>
+
+                      {/* MDL */}
+                      <div className="acc-progress-item">
+                        <div className="acc-progress-label">
+                          <span style={{ color: "var(--mut)" }}>Lỗ tối đa ngày (MDL)</span>
+                          <span className="mono" style={{ color: mdlBuffer < acc.mdl * 0.3 ? "var(--dn)" : "inherit" }}>
+                            Hôm nay còn: ${mdlBuffer.toFixed(0)} / ${acc.mdl.toLocaleString()}
+                          </span>
+                        </div>
+                        <div className="acc-progress-track">
+                          <div className="acc-progress-fill fill-mdl" style={{ width: `${mdlPctUsed}%` }} />
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Futures Funded Consistency Box */}
+                    {acc.accountType === "futures" && acc.status === "funded" && (
+                      <div className="acc-consistency-box">
+                        <div className="acc-consistency-box-header">
+                          <span>Quy tắc Consistency ({acc.consistencyPct || 50}%)</span>
+                          <span className={consistency.isConsistent ? "up" : "dn"}>
+                            {consistency.consistencyPct.toFixed(1)}% / {consistency.maxAllowedPct}%
+                          </span>
+                        </div>
+                        <div className="sub-title">
+                          Ngày lời cao nhất: ${consistency.maxDayProfit.toFixed(0)} / ${consistency.totalPositiveProfit.toFixed(0)} tổng lãi.
+                        </div>
+                        <div className={`acc-consistency-status ${consistency.isConsistent ? "up" : "dn"}`}>
+                          {consistency.isConsistent
+                            ? "Đạt chuẩn nhất quán (Dưới ngưỡng cho phép)."
+                            : `Cảnh báo: Ngày lớn nhất chiếm ${consistency.consistencyPct.toFixed(1)}% (> ${consistency.maxAllowedPct}%). Cần thêm ngày giao dịch để cân bằng.`}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* CFD Phase Table */}
+                    {acc.accountType === "cfd" && acc.cfdPhases && acc.cfdPhases.length > 0 && (
+                      <div className="acc-phase-box">
+                        <div className="acc-phase-box-title">
+                          Tiến độ các vòng CFD (Đang ở Vòng {acc.currentPhase || 1})
+                        </div>
+                        <table className="acc-phase-table">
+                          <thead>
+                            <tr>
+                              <th>Vòng thi</th>
+                              <th>Target %</th>
+                              <th>MDL %</th>
+                              <th>MLL %</th>
+                              <th>Trạng thái</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {acc.cfdPhases.map((ph) => {
+                              const isCurrent = (acc.currentPhase || 1) === ph.phase;
+                              const isPast = (acc.currentPhase || 1) > ph.phase;
+                              return (
+                                <tr key={ph.phase} className={isCurrent ? "active-phase" : ""}>
+                                  <td>{ph.name}</td>
+                                  <td className="mono">{ph.targetPct > 0 ? `+${ph.targetPct}%` : "Funded Live"}</td>
+                                  <td className="mono">{ph.mdlPct}%</td>
+                                  <td className="mono">{ph.mllPct}%</td>
+                                  <td>
+                                    {isCurrent ? (
+                                      <span className="tag" style={{ background: "var(--blue)", color: "#fff" }}>Đang thi</span>
+                                    ) : isPast ? (
+                                      <span className="tag" style={{ background: "var(--up-bg)", color: "var(--up)" }}>Đã qua</span>
+                                    ) : (
+                                      <span className="sub-title">Chưa tới</span>
+                                    )}
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+
+                    {/* Footer Buttons */}
+                    <div className="acc-card-footer">
+                      <div>
+                        {!isActive && (
+                          <button
+                            className="btn primary"
+                            onClick={() => handleSelectActiveAccount(acc.id)}
+                          >
+                            Chọn giao dịch
+                          </button>
+                        )}
+                      </div>
+                      <div style={{ display: "flex", gap: "8px" }}>
+                        <button
+                          className="btn"
+                          onClick={() => {
+                            setEditingAccountId(acc.id);
+                            setAccForm({
+                              name: acc.name,
+                              propFirm: acc.propFirm,
+                              accountType: acc.accountType,
+                              balance: acc.balance,
+                              currentBalance: acc.currentBalance ?? acc.balance,
+                              mll: acc.mll,
+                              mdl: acc.mdl,
+                              target: acc.target,
+                              status: acc.status,
+                              consistencyPct: acc.consistencyPct ?? 50,
+                              riskPct: acc.riskPct ?? 0.5,
+                              maxTradesDaily: acc.maxTradesDaily ?? 3,
+                              maxLossRDaily: acc.maxLossRDaily ?? 2,
+                              currentPhase: acc.currentPhase ?? 1,
+                              cfdPhases: acc.cfdPhases && acc.cfdPhases.length > 0 ? acc.cfdPhases : [
+                                { phase: 1, name: "Vòng 1 (Challenge)", targetPct: 8, mdlPct: 5, mllPct: 10 },
+                                { phase: 2, name: "Vòng 2 (Verification)", targetPct: 5, mdlPct: 5, mllPct: 10 },
+                                { phase: 3, name: "Funded Live", targetPct: 0, mdlPct: 5, mllPct: 10 },
+                              ],
+                            });
+                            setAccModalOpen(true);
+                          }}
+                        >
+                          Sửa
+                        </button>
+                        <button
+                          className="btn danger"
+                          onClick={() => handleDeleteAccount(acc.id)}
+                        >
+                          Xóa
+                        </button>
+                      </div>
                     </div>
                   </div>
-                </div>
-              );
-            }))}
+                );
+              }))}
           </div>
         </div>
       )}
@@ -1383,12 +1450,12 @@ export default function Home() {
                 {isDailyBreached
                   ? "Chạm MDL ngày!"
                   : isMllBreached
-                  ? "Chạm MLL quỹ!"
-                  : isTradeLimitReached
-                  ? "Đạt giới hạn lệnh!"
-                  : isLossRReached
-                  ? "Chạm mức lỗ R!"
-                  : "Sẵn sàng"}
+                    ? "Chạm MLL quỹ!"
+                    : isTradeLimitReached
+                      ? "Đạt giới hạn lệnh!"
+                      : isLossRReached
+                        ? "Chạm mức lỗ R!"
+                        : "Sẵn sàng"}
               </b>
               <small>{isLocked ? "Đạt giới hạn rủi ro" : "Tuân thủ kỷ luật"}</small>
             </div>
@@ -2004,32 +2071,6 @@ export default function Home() {
               </button>
             </div>
           </div>
-
-          {/* Data panel */}
-          <div className="panel">
-            <h2>Dữ liệu</h2>
-            <div className="sub-title" style={{ margin: "6px 0 16px" }}>
-              Tải dữ liệu mẫu để kiểm tra lịch P&L hoặc xóa dữ liệu để bắt đầu lại.
-            </div>
-            <div style={{ display: "flex", gap: "10px", marginTop: "12px" }}>
-              <button className="btn" onClick={handleLoadDemo}>
-                Tải dữ liệu mẫu
-              </button>
-              <button
-                className="btn danger"
-                onClick={() => {
-                  if (confirm("Bạn có chắc chắn muốn xóa toàn bộ lệnh?")) {
-                    setTrades([]);
-                    if (typeof window !== "undefined") {
-                      localStorage.removeItem("ictm");
-                    }
-                  }
-                }}
-              >
-                Xóa toàn bộ lệnh
-              </button>
-            </div>
-          </div>
         </div>
       )}
 
@@ -2535,87 +2576,198 @@ export default function Home() {
         </div>
       )}
 
-      {/* USER LOGIN / SWITCH NICKNAME MODAL */}
-      {userModalOpen && (
+      {/* USER LOGIN & REGISTRATION MODAL */}
+      {authModalOpen && (
         <div
           className="modal-overlay"
           onMouseDown={handleOverlayMouseDown}
-          onClick={handleOverlayClick(() => setUserModalOpen(false))}
+          onClick={handleOverlayClick(() => {
+            if (activeUser) setAuthModalOpen(false);
+          })}
         >
           <div
             className="modal-content"
-            style={{ maxWidth: "480px" }}
+            style={{ maxWidth: "460px" }}
             onMouseDown={(e) => e.stopPropagation()}
             onClick={(e) => e.stopPropagation()}
           >
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
-              <h2 style={{ margin: 0 }}>
-                {activeUser ? "Đổi Nickname Người Dùng" : "Khởi tạo Nickname Người Dùng"}
-              </h2>
-              {activeUser && <button className="btn" onClick={() => setUserModalOpen(false)}>Đóng</button>}
-            </div>
-
-            <div className="sub-title" style={{ marginBottom: "16px" }}>
-              {activeUser
-                ? "Mỗi Nickname sẽ sở hữu các tài khoản quỹ (Prop Firm) và nhật ký giao dịch hoàn toàn riêng biệt."
-                : "Hệ thống CSDL thật chưa có thông tin người dùng. Vui lòng nhập Nickname của bạn để bắt đầu khởi tạo tài khoản trên CSDL thật."}
-            </div>
-
-            <div style={{ marginBottom: "12px" }}>
-              <label>Nickname người dùng</label>
-              <input
-                value={loginNickInput}
-                onChange={(e) => setLoginNickInput(e.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, ""))}
-                placeholder="Ví dụ: thien_ict, alex_trader..."
-                autoFocus
-              />
-              <div className="sub-title" style={{ marginTop: "4px" }}>
-                Chỉ gồm chữ cái viết thường, số, dấu gạch dưới `_` hoặc gạch ngang `-`.
+              <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                <h2 style={{ margin: 0, fontSize: "18px" }}>
+                  {authMode === "login" ? "Đăng nhập tài khoản" : "Đăng ký tài khoản mới"}
+                </h2>
               </div>
+              {activeUser && (
+                <button
+                  type="button"
+                  className="btn"
+                  onClick={() => setAuthModalOpen(false)}
+                  style={{ padding: "4px 10px", fontSize: "12px" }}
+                >
+                  Đóng
+                </button>
+              )}
             </div>
 
-            <div style={{ marginBottom: "16px" }}>
-              <label>Tên hiển thị (Tùy chọn)</label>
-              <input
-                value={loginNameInput}
-                onChange={(e) => setLoginNameInput(e.target.value)}
-                placeholder="Ví dụ: Thiện ICT, Alex Trader..."
-              />
+            {/* Navigation Tabs */}
+            <div className="auth-tabs-nav">
+              <button
+                type="button"
+                className={`auth-tab-btn ${authMode === "login" ? "active" : ""}`}
+                onClick={() => {
+                  setAuthMode("login");
+                  setAuthError(null);
+                }}
+              >
+                Đăng nhập
+              </button>
+              <button
+                type="button"
+                className={`auth-tab-btn ${authMode === "register" ? "active" : ""}`}
+                onClick={() => {
+                  setAuthMode("register");
+                  setAuthError(null);
+                }}
+              >
+                Đăng ký tài khoản mới
+              </button>
             </div>
 
-            {recentUsers.length > 0 && (
-              <div style={{ marginBottom: "20px" }}>
-                <label>Tài khoản đã đăng nhập gần đây trên máy này:</label>
-                <div className="recent-users-chips">
-                  {recentUsers.map((u) => (
-                    <button
-                      key={u.nickname}
-                      type="button"
-                      className={`user-chip ${u.nickname === activeUser?.nickname ? "active" : ""}`}
-                      onClick={() => handleSwitchUser(u.nickname, u.displayName)}
-                    >
-                      <span>{u.nickname}</span>
-                      {u.displayName && u.displayName !== u.nickname && (
-                        <span style={{ fontSize: 10, color: "var(--mut)" }}>({u.displayName})</span>
-                      )}
-                      {u.nickname === activeUser?.nickname && (
-                        <span className="badge-tag badge-funded" style={{ fontSize: 9 }}>Đang dùng</span>
-                      )}
-                    </button>
-                  ))}
-                </div>
+            {/* Error Banner */}
+            {authError && (
+              <div className="auth-error-box">
+                <span style={{ fontWeight: 700, fontSize: "14px" }}>⚠️</span>
+                <div>{authError}</div>
               </div>
             )}
 
-            <div style={{ display: "flex", justifyContent: "flex-end", gap: "10px" }}>
-              {activeUser && <button className="btn" onClick={() => setUserModalOpen(false)}>Hủy</button>}
-              <button
-                className="btn primary"
-                onClick={() => handleSwitchUser(loginNickInput, loginNameInput)}
-              >
-                {activeUser ? "Đăng nhập / Chuyển Nickname" : "Khởi tạo Nickname & Bắt đầu"}
-              </button>
-            </div>
+            <form onSubmit={handleAuthSubmit}>
+              {/* Username Input */}
+              <div style={{ marginBottom: "14px" }}>
+                <label style={{ display: "block", marginBottom: "6px", fontWeight: 600, fontSize: "13px" }}>
+                  Tên đăng nhập
+                </label>
+                <input
+                  type="text"
+                  value={authUsername}
+                  onChange={(e) => setAuthUsername(e.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, ""))}
+                  placeholder="Ví dụ: thien_ict, trader99..."
+                  autoFocus
+                  required
+                  style={{ width: "100%" }}
+                />
+                <div className="auth-hint">Chỉ gồm chữ thường, số, dấu gạch dưới `_` hoặc gạch ngang `-`.</div>
+              </div>
+
+              {/* Display Name Input (Only on Register) */}
+              {authMode === "register" && (
+                <div style={{ marginBottom: "14px" }}>
+                  <label style={{ display: "block", marginBottom: "6px", fontWeight: 600, fontSize: "13px" }}>
+                    Tên hiển thị (Tùy chọn)
+                  </label>
+                  <input
+                    type="text"
+                    value={authDisplayName}
+                    onChange={(e) => setAuthDisplayName(e.target.value)}
+                    placeholder="Ví dụ: Thiện Trader, Alex ICT..."
+                    style={{ width: "100%" }}
+                  />
+                </div>
+              )}
+
+              {/* Password Input */}
+              <div style={{ marginBottom: "14px" }}>
+                <label style={{ display: "block", marginBottom: "6px", fontWeight: 600, fontSize: "13px" }}>
+                  Mật khẩu
+                </label>
+                <div className="auth-input-wrap">
+                  <input
+                    type={showPassword ? "text" : "password"}
+                    value={authPassword}
+                    onChange={(e) => setAuthPassword(e.target.value)}
+                    placeholder="Nhập mật khẩu..."
+                    required
+                  />
+                  <button
+                    type="button"
+                    className="auth-toggle-pwd"
+                    onClick={() => setShowPassword(!showPassword)}
+                    title={showPassword ? "Ẩn mật khẩu" : "Hiện mật khẩu"}
+                  >
+                    {showPassword ? "Ẩn" : "Hiện"}
+                  </button>
+                </div>
+                {authMode === "register" && (
+                  <div className="auth-hint">Tối thiểu 4 ký tự trở lên.</div>
+                )}
+              </div>
+
+              {/* Confirm Password Input (Only on Register) */}
+              {authMode === "register" && (
+                <div style={{ marginBottom: "16px" }}>
+                  <label style={{ display: "block", marginBottom: "6px", fontWeight: 600, fontSize: "13px" }}>
+                    Xác nhận lại mật khẩu
+                  </label>
+                  <div className="auth-input-wrap">
+                    <input
+                      type={showPassword ? "text" : "password"}
+                      value={authConfirmPassword}
+                      onChange={(e) => setAuthConfirmPassword(e.target.value)}
+                      placeholder="Nhập lại chính xác mật khẩu trên..."
+                      required
+                    />
+                  </div>
+                </div>
+              )}
+
+              {/* Quick Switch from Recent Users (On Login Mode) */}
+              {authMode === "login" && recentUsers.length > 0 && (
+                <div style={{ marginBottom: "18px" }}>
+                  <label style={{ fontSize: "11.5px", color: "var(--mut)" }}>
+                    Chọn nhanh tài khoản đã dùng trên máy:
+                  </label>
+                  <div className="auth-recent-users-grid">
+                    {recentUsers.slice(0, 5).map((u) => (
+                      <button
+                        key={u.nickname}
+                        type="button"
+                        className="auth-recent-chip"
+                        onClick={() => {
+                          setAuthUsername(u.nickname);
+                          setAuthError(null);
+                        }}
+                      >
+                        <span style={{ fontWeight: 600 }}>{u.nickname}</span>
+                        {u.nickname === activeUser?.nickname && (
+                          <span style={{ fontSize: 9, color: "#10b981" }}>(Hiện tại)</span>
+                        )}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Action Buttons */}
+              <div style={{ display: "flex", justifyContent: "flex-end", gap: "10px", marginTop: "20px" }}>
+                {activeUser && (
+                  <button type="button" className="btn" onClick={() => setAuthModalOpen(false)}>
+                    Hủy
+                  </button>
+                )}
+                <button
+                  type="submit"
+                  className="btn primary"
+                  disabled={authLoading}
+                  style={{ minWidth: "140px", display: "flex", justifyContent: "center", alignItems: "center", gap: "6px" }}
+                >
+                  {authLoading
+                    ? "Đang xử lý..."
+                    : authMode === "login"
+                      ? "Đăng nhập ngay"
+                      : "Đăng ký & Bắt đầu"}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

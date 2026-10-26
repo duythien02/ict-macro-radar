@@ -83,11 +83,11 @@ export const PROP_PRESETS = [
   },
   {
     firm: "bulenox" as const,
-    label: "Bulenox 25K Qualifying",
+    label: "Bulenox 25K Momentum",
     type: "futures" as const,
     balance: 25000,
-    mll: 1500,
-    mdl: 1000,
+    mll: 1000,
+    mdl: 600,
     target: 1500,
     consistency: 40,
     riskPct: 0.5,
@@ -96,11 +96,11 @@ export const PROP_PRESETS = [
   },
   {
     firm: "bulenox" as const,
-    label: "Bulenox 50K Qualifying",
+    label: "Bulenox 50K Momentum",
     type: "futures" as const,
     balance: 50000,
-    mll: 2500,
-    mdl: 1500,
+    mll: 2250,
+    mdl: 1200,
     target: 3000,
     consistency: 40,
     riskPct: 0.5,
@@ -109,11 +109,11 @@ export const PROP_PRESETS = [
   },
   {
     firm: "bulenox" as const,
-    label: "Bulenox 100K Qualifying",
+    label: "Bulenox 100K Momentum",
     type: "futures" as const,
     balance: 100000,
-    mll: 3000,
-    mdl: 2000,
+    mll: 4000,
+    mdl: 2500,
     target: 6000,
     consistency: 40,
     riskPct: 0.5,
@@ -161,13 +161,34 @@ export const SQL_SCHEMA_SCRIPT = `-- ===========================================
 -- Chạy đoạn script này trong SQL Editor của Supabase
 -- ========================================================
 
--- 1. Bảng quản lý người dùng theo Nickname (users)
+-- 1. Bảng quản lý người dùng theo Nickname (users) có mật khẩu
 CREATE TABLE IF NOT EXISTS public.users (
   nickname TEXT PRIMARY KEY,
   display_name TEXT,
+  password_hash TEXT,
+  salt TEXT,
   created_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now()) NOT NULL,
   last_login_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now()) NOT NULL
 );
+
+-- Bổ sung cột password_hash và salt nếu bảng users đã tồn tại
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns 
+    WHERE table_name='users' AND column_name='password_hash'
+  ) THEN
+    ALTER TABLE public.users ADD COLUMN password_hash TEXT;
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns 
+    WHERE table_name='users' AND column_name='salt'
+  ) THEN
+    ALTER TABLE public.users ADD COLUMN salt TEXT;
+  END IF;
+END $$;
+
 
 -- 2. Bảng quản lý tài khoản quỹ (accounts) - gắn với user_nickname
 CREATE TABLE IF NOT EXISTS public.accounts (

@@ -15,6 +15,13 @@ export interface UserProfile {
   displayName?: string;
   createdAt?: string;
   lastLoginAt?: string;
+  hasPassword?: boolean;
+}
+
+export interface AuthResponse {
+  success: boolean;
+  user?: UserProfile;
+  error?: string;
 }
 
 export interface PropAccount {

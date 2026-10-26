@@ -169,22 +169,91 @@ export async function testSupabaseConnection(url: string, key: string): Promise<
 }
 
 // ==========================================
-// USER NICKNAME OPERATIONS
+// USER AUTHENTICATION & PASSWORD SECURITY
 // ==========================================
+
+export async function hashPassword(password: string, salt: string): Promise<string> {
+  if (typeof crypto !== "undefined" && crypto.subtle) {
+    const enc = new TextEncoder();
+    const data = enc.encode(`${salt}:${password}`);
+    const hashBuf = await crypto.subtle.digest("SHA-256", data);
+    const hashArr = Array.from(new Uint8Array(hashBuf));
+    return hashArr.map((b) => b.toString(16).padStart(2, "0")).join("");
+  }
+  // Simple fallback
+  let hash = 0;
+  const str = `${salt}:${password}`;
+  for (let i = 0; i < str.length; i++) {
+    const char = str.charCodeAt(i);
+    hash = (hash << 5) - hash + char;
+    hash |= 0;
+  }
+  return Math.abs(hash).toString(16);
+}
+
+export function generateSalt(): string {
+  if (typeof crypto !== "undefined" && crypto.getRandomValues) {
+    const arr = new Uint8Array(16);
+    crypto.getRandomValues(arr);
+    return Array.from(arr).map((b) => b.toString(16).padStart(2, "0")).join("");
+  }
+  return Math.random().toString(36).substring(2, 15) + Date.now().toString(36);
+}
+
+// Local users storage fallback (for offline or local testing)
+interface StoredLocalUser {
+  nickname: string;
+  displayName: string;
+  passwordHash: string;
+  salt: string;
+  createdAt: string;
+  lastLoginAt: string;
+}
+
+function getLocalUsers(): StoredLocalUser[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = localStorage.getItem("ict_local_auth_users");
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveLocalUsers(users: StoredLocalUser[]) {
+  if (typeof window === "undefined") return;
+  try {
+    localStorage.setItem("ict_local_auth_users", JSON.stringify(users));
+  } catch {}
+}
+
 export async function fetchUsers(): Promise<UserProfile[]> {
   const sb = getSupabase();
   if (sb) {
     try {
-      const { data, error } = await sb.from("users").select("*").order("last_login_at", { ascending: false });
+      const { data, error } = await sb.from("users").select("nickname, display_name, created_at, last_login_at, password_hash").order("last_login_at", { ascending: false });
       if (!error && data) {
         return data.map((d: any) => ({
           nickname: d.nickname,
           displayName: d.display_name,
           createdAt: d.created_at,
           lastLoginAt: d.last_login_at,
+          hasPassword: !!d.password_hash,
         }));
       }
     } catch {}
+  }
+
+  // Fallback to local auth users
+  const localAuth = getLocalUsers();
+  if (localAuth.length > 0) {
+    return localAuth.map((u) => ({
+      nickname: u.nickname,
+      displayName: u.displayName,
+      createdAt: u.createdAt,
+      lastLoginAt: u.lastLoginAt,
+      hasPassword: true,
+    }));
   }
 
   if (typeof window !== "undefined") {
@@ -200,58 +269,243 @@ export async function fetchUsers(): Promise<UserProfile[]> {
   return [];
 }
 
+/**
+ * Đăng ký tài khoản mới với Username và Mật khẩu
+ */
+export async function registerUser(
+  username: string,
+  password: string,
+  displayName?: string
+): Promise<UserProfile> {
+  const cleanNick = username.trim().toLowerCase().replace(/[^a-z0-9_-]/g, "");
+  if (!cleanNick || cleanNick.length < 3) {
+    throw new Error("Tên đăng nhập phải có ít nhất 3 ký tự (chỉ gồm chữ cái, số, gạch dưới _ hoặc -).");
+  }
+
+  if (!password || password.length < 4) {
+    throw new Error("Mật khẩu phải có độ dài tối thiểu 4 ký tự.");
+  }
+
+  const name = displayName?.trim() || cleanNick;
+  const now = new Date().toISOString();
+  const salt = generateSalt();
+  const passwordHash = await hashPassword(password, salt);
+
+  const sb = getSupabase();
+  if (sb) {
+    // 1. Kiểm tra tài khoản đã tồn tại trên Supabase chưa
+    const { data: existingUser, error: checkErr } = await sb
+      .from("users")
+      .select("nickname")
+      .eq("nickname", cleanNick)
+      .maybeSingle();
+
+    if (existingUser) {
+      throw new Error(`Tên đăng nhập '${cleanNick}' đã tồn tại! Vui lòng chọn tên khác hoặc chuyển sang Đăng nhập.`);
+    }
+
+    // 2. Insert tài khoản mới vào Supabase
+    const { error: insertErr } = await sb.from("users").insert({
+      nickname: cleanNick,
+      display_name: name,
+      password_hash: passwordHash,
+      salt: salt,
+      created_at: now,
+      last_login_at: now,
+    });
+
+    if (insertErr) {
+      // Nếu cột password_hash chưa tồn tại trong Supabase, thử fallback insert cơ bản và cảnh báo
+      if (insertErr.message.includes("password_hash") || insertErr.code === "42703") {
+        console.warn("Cột password_hash chưa có trong bảng users, hãy chạy lại script SQL!");
+        await sb.from("users").insert({
+          nickname: cleanNick,
+          display_name: name,
+          created_at: now,
+          last_login_at: now,
+        });
+      } else {
+        throw new Error(`Lỗi đăng ký Supabase: ${insertErr.message}`);
+      }
+    }
+
+    // 3. Khởi tạo cấu hình user_config mặc định
+    await sb.from("user_config").upsert({
+      id: cleanNick,
+      active_account_id: null,
+      bal: 50000,
+      risk: 0.5,
+      max_t: 3,
+      max_l: 2.0,
+      updated_at: now,
+    });
+  }
+
+  // Lưu tài khoản cục bộ dự phòng
+  const localUsers = getLocalUsers();
+  const existingLocal = localUsers.find((u) => u.nickname === cleanNick);
+  if (!existingLocal) {
+    localUsers.unshift({
+      nickname: cleanNick,
+      displayName: name,
+      passwordHash,
+      salt,
+      createdAt: now,
+      lastLoginAt: now,
+    });
+    saveLocalUsers(localUsers);
+  }
+
+  const userObj: UserProfile = {
+    nickname: cleanNick,
+    displayName: name,
+    createdAt: now,
+    lastLoginAt: now,
+    hasPassword: true,
+  };
+
+  // Lưu session đăng nhập vào localStorage
+  if (typeof window !== "undefined") {
+    localStorage.setItem("ict_active_user", cleanNick);
+    const existing = await fetchUsers();
+    const filtered = existing.filter((u) => u.nickname !== cleanNick);
+    localStorage.setItem("ict_recent_users", JSON.stringify([userObj, ...filtered].slice(0, 8)));
+  }
+
+  return userObj;
+}
+
+/**
+ * Đăng nhập tài khoản bằng Tên đăng nhập và Mật khẩu
+ */
+export async function loginUser(username: string, password: string): Promise<UserProfile> {
+  const cleanNick = username.trim().toLowerCase().replace(/[^a-z0-9_-]/g, "");
+  if (!cleanNick) {
+    throw new Error("Vui lòng nhập tên đăng nhập!");
+  }
+  if (!password) {
+    throw new Error("Vui lòng nhập mật khẩu!");
+  }
+
+  const sb = getSupabase();
+  let verifiedUser: UserProfile | null = null;
+  const now = new Date().toISOString();
+
+  if (sb) {
+    const { data: dbUser, error } = await sb
+      .from("users")
+      .select("*")
+      .eq("nickname", cleanNick)
+      .maybeSingle();
+
+    if (error) {
+      console.warn("Lỗi kiểm tra user Supabase:", error);
+    }
+
+    if (dbUser) {
+      // Trường hợp 1: User đã có mật khẩu trong DB
+      if (dbUser.password_hash && dbUser.salt) {
+        const computedHash = await hashPassword(password, dbUser.salt);
+        if (computedHash !== dbUser.password_hash) {
+          throw new Error("Mật khẩu không chính xác! Vui lòng thử lại.");
+        }
+      } else {
+        // Trường hợp 2: Tài khoản cũ chưa gán mật khẩu -> tự động cập nhật mật khẩu lần đầu
+        const newSalt = generateSalt();
+        const newHash = await hashPassword(password, newSalt);
+        try {
+          await sb.from("users").update({
+            password_hash: newHash,
+            salt: newSalt,
+            last_login_at: now,
+          }).eq("nickname", cleanNick);
+        } catch {}
+      }
+
+      // Cập nhật last_login_at
+      try {
+        await sb.from("users").update({ last_login_at: now }).eq("nickname", cleanNick);
+      } catch {}
+
+      verifiedUser = {
+        nickname: dbUser.nickname,
+        displayName: dbUser.display_name || dbUser.nickname,
+        createdAt: dbUser.created_at,
+        lastLoginAt: now,
+        hasPassword: true,
+      };
+    }
+  }
+
+  // Nếu chưa xác thực qua Supabase hoặc Supabase không tìm thấy: kiểm tra local fallback
+  if (!verifiedUser) {
+    const localUsers = getLocalUsers();
+    const matched = localUsers.find((u) => u.nickname === cleanNick);
+    if (matched) {
+      const computedHash = await hashPassword(password, matched.salt);
+      if (computedHash !== matched.passwordHash) {
+        throw new Error("Mật khẩu không chính xác! Vui lòng thử lại.");
+      }
+      matched.lastLoginAt = now;
+      saveLocalUsers(localUsers);
+      verifiedUser = {
+        nickname: matched.nickname,
+        displayName: matched.displayName,
+        createdAt: matched.createdAt,
+        lastLoginAt: now,
+        hasPassword: true,
+      };
+    }
+  }
+
+  if (!verifiedUser) {
+    throw new Error(`Tài khoản '${cleanNick}' không tồn tại! Hãy kiểm tra lại hoặc chuyển sang tab 'Đăng ký mới'.`);
+  }
+
+  // Lưu active session
+  if (typeof window !== "undefined") {
+    localStorage.setItem("ict_active_user", verifiedUser.nickname);
+    const existing = await fetchUsers();
+    const filtered = existing.filter((u) => u.nickname !== verifiedUser!.nickname);
+    localStorage.setItem("ict_recent_users", JSON.stringify([verifiedUser, ...filtered].slice(0, 8)));
+  }
+
+  return verifiedUser;
+}
+
+/**
+ * Đăng xuất tài khoản
+ */
+export function logoutUser(): void {
+  if (typeof window !== "undefined") {
+    localStorage.removeItem("ict_active_user");
+  }
+}
+
+/**
+ * Tương thích ngược với các lệnh khởi tạo tự động cũ
+ */
 export async function registerOrLoginUser(nickname: string, displayName?: string): Promise<UserProfile> {
   const cleanNick = nickname.trim().toLowerCase().replace(/[^a-z0-9_-]/g, "");
   if (!cleanNick) {
     throw new Error("Nickname không hợp lệ");
   }
   const name = displayName?.trim() || cleanNick;
-  const userObj: UserProfile = {
-    nickname: cleanNick,
-    displayName: name,
-    lastLoginAt: new Date().toISOString(),
-  };
 
-  // Save to LocalStorage recent users
-  if (typeof window !== "undefined") {
+  // Thử login với password mặc định nếu có, hoặc đăng ký
+  try {
+    return await loginUser(cleanNick, "123456");
+  } catch {
     try {
-      localStorage.setItem("ict_active_user", cleanNick);
-      const existing = await fetchUsers();
-      const filtered = existing.filter((u) => u.nickname !== cleanNick);
-      const updated = [userObj, ...filtered].slice(0, 8);
-      localStorage.setItem("ict_recent_users", JSON.stringify(updated));
-    } catch {}
-  }
-
-  // Save to Supabase
-  const sb = getSupabase();
-  if (sb) {
-    try {
-      await sb.from("users").upsert({
+      return await registerUser(cleanNick, "123456", name);
+    } catch {
+      return {
         nickname: cleanNick,
-        display_name: name,
-        last_login_at: new Date().toISOString(),
-      });
-
-      // Đảm bảo bản ghi cấu hình user_config được tạo trong Supabase
-      const { data: existingCfg } = await sb.from("user_config").select("id").eq("id", cleanNick).maybeSingle();
-      if (!existingCfg) {
-        await sb.from("user_config").upsert({
-          id: cleanNick,
-          active_account_id: null,
-          bal: 50000,
-          risk: 0.5,
-          max_t: 3,
-          max_l: 2.0,
-          updated_at: new Date().toISOString(),
-        });
-      }
-    } catch (e) {
-      console.warn("Supabase user login warning:", e);
+        displayName: name,
+        lastLoginAt: new Date().toISOString(),
+      };
     }
   }
-
-  return userObj;
 }
 
 // ==========================================
