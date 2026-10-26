@@ -112,6 +112,7 @@ export default function Home() {
     nyTxt: "--:--:--",
     vnTxt: "--:--:--",
     nyMin: 0,
+    nySec: 0,
     vnMin: 0,
     dst: true,
     off: 11,
@@ -341,6 +342,7 @@ export default function Home() {
         nyTxt,
         vnTxt,
         nyMin: nyH * 60 + nyM,
+        nySec: Number(nyS) || 0,
         vnMin: vnH * 60 + nyM,
         dst: isDst,
         off,
@@ -372,6 +374,30 @@ export default function Home() {
   const curSess = macroCtx.cur;
   const nxtSess = macroCtx.nxt;
   const waitMin = macroCtx.wait;
+
+  // Live countdown calculation down to the second
+  const currentNyTotalSec = clocks.nyMin * 60 + (clocks.nySec || 0);
+
+  let waitHours = 0;
+  let waitMinutes = 0;
+  let waitSeconds = 0;
+  let remMinutes = 0;
+  let remSeconds = 0;
+
+  if (curSess) {
+    const curEndSec = curSess.e * 60;
+    const curRemSec = Math.max(0, curEndSec - currentNyTotalSec);
+    remMinutes = Math.floor(curRemSec / 60);
+    remSeconds = curRemSec % 60;
+  }
+
+  if (nxtSess) {
+    const nxtStartSec = nxtSess.s * 60;
+    const waitTotalSec = ((nxtStartSec - currentNyTotalSec) % 86400 + 86400) % 86400;
+    waitHours = Math.floor(waitTotalSec / 3600);
+    waitMinutes = Math.floor((waitTotalSec % 3600) / 60);
+    waitSeconds = waitTotalSec % 60;
+  }
 
   // Active Prop Account
   const activeAcc = useMemo(() => {
@@ -968,13 +994,20 @@ export default function Home() {
       {/* Global Macro Status Bar - Always Visible in Header */}
       {curSess ? (
         <div className="now-banner live header-macro-banner">
-          <div>
+          <div className="macro-banner-left">
             <div className="sub-title" style={{ display: "flex", alignItems: "center", gap: "6px" }}>
               <span className="live-dot" style={{ display: "inline-block", width: 8, height: 8, borderRadius: "50%", background: "var(--acc)", boxShadow: "0 0 8px var(--acc)" }} />
               <span>ĐANG TRONG KHUNG MACRO</span>
             </div>
-            <div className="big">
-              {curSess.n} · còn {curSess.e - clocks.nyMin} phút
+            <div className="macro-banner-title-row">
+              <span className="macro-sess-name">{curSess.n}</span>
+              <span className="macro-countdown-pill live" title="Thời gian còn lại của phiên Macro hiện tại">
+                <span className="countdown-icon">⚡</span>
+                <span className="countdown-label">CÒN LẠI</span>
+                <b className="countdown-digits" suppressHydrationWarning>
+                  {remMinutes}ph {String(remSeconds).padStart(2, "0")}s
+                </b>
+              </span>
             </div>
           </div>
           <button
@@ -986,14 +1019,28 @@ export default function Home() {
         </div>
       ) : (
         <div className="now-banner header-macro-banner">
-          <div>
+          <div className="macro-banner-left">
             <div className="sub-title">NGOÀI KHUNG MACRO - HÃY KIÊN NHẪN</div>
-            <div className="big">
-              Tiếp theo: {nxtSess?.n} sau {Math.floor(waitMin / 60)}g {waitMin % 60}ph
+            <div className="macro-banner-title-row">
+              <span className="macro-sess-name">
+                Tiếp theo: <b>{nxtSess?.n}</b>
+              </span>
+              <span className="macro-countdown-pill waiting" title="Đếm ngược đến khung Macro tiếp theo">
+                <span className="countdown-icon">⏳</span>
+                <span className="countdown-label">CÒN</span>
+                <b className="countdown-digits" suppressHydrationWarning>
+                  {waitHours > 0 ? `${waitHours}g ` : ""}{String(waitMinutes).padStart(2, "0")}ph {String(waitSeconds).padStart(2, "0")}s
+                </b>
+              </span>
             </div>
           </div>
-          <div className="mono sub-title" style={{ fontSize: "14px", fontWeight: 600 }}>
-            VN {hm((nxtSess?.s || 0) + clocks.off * 60)}
+          <div className="macro-banner-right">
+            <div className="macro-vn-badge">
+              <span className="sub-title" style={{ fontSize: 11, display: "block", textTransform: "uppercase" }}>Giờ bắt đầu</span>
+              <span className="mono" style={{ fontSize: 15, fontWeight: 700, color: "var(--tx)" }}>
+                VN {hm((nxtSess?.s || 0) + clocks.off * 60)}
+              </span>
+            </div>
           </div>
         </div>
       )}

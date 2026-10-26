@@ -91,16 +91,108 @@ header {
 .header-macro-banner {
   width: 100%;
   margin: 0;
-  padding: 13px 20px;
+  padding: 12px 20px;
   border-radius: var(--radius-md);
   box-sizing: border-box;
 }
 
-.header-macro-banner .big {
+.macro-banner-left {
+  display: flex;
+  flex-direction: column;
+}
+
+.macro-banner-title-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-top: 5px;
+}
+
+.macro-sess-name {
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--tx);
+  letter-spacing: -0.01em;
+}
+
+.macro-countdown-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 14px;
+  border-radius: 9999px;
+  transition: all 0.2s ease;
+}
+
+.macro-countdown-pill.waiting {
+  background: rgba(245, 158, 11, 0.12);
+  border: 1.5px solid rgba(245, 158, 11, 0.45);
+  box-shadow: 0 0 14px rgba(245, 158, 11, 0.18);
+}
+
+.macro-countdown-pill.live {
+  background: rgba(16, 185, 129, 0.15);
+  border: 1.5px solid rgba(16, 185, 129, 0.55);
+  box-shadow: 0 0 16px rgba(16, 185, 129, 0.25);
+}
+
+.macro-countdown-pill .countdown-icon {
+  font-size: 14px;
+}
+
+.macro-countdown-pill .countdown-label {
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.macro-countdown-pill.waiting .countdown-label {
+  color: #f59e0b;
+}
+
+.macro-countdown-pill.live .countdown-label {
+  color: #10b981;
+}
+
+.macro-countdown-pill .countdown-digits {
+  font-family: var(--font-mono);
   font-size: 18px;
   font-weight: 800;
-  letter-spacing: -0.01em;
-  margin-top: 2px;
+  letter-spacing: 0.04em;
+}
+
+.macro-countdown-pill.waiting .countdown-digits {
+  color: #f59e0b;
+}
+
+.macro-countdown-pill.live .countdown-digits {
+  color: #10b981;
+}
+
+[data-theme="light"] .macro-countdown-pill.waiting {
+  background: rgba(217, 119, 6, 0.12);
+  border-color: rgba(217, 119, 6, 0.5);
+}
+
+[data-theme="light"] .macro-countdown-pill.waiting .countdown-label,
+[data-theme="light"] .macro-countdown-pill.waiting .countdown-digits {
+  color: #b45309;
+}
+
+.macro-banner-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.macro-vn-badge {
+  text-align: right;
+  background: var(--s2);
+  border: 1px solid var(--line);
+  padding: 4px 12px;
+  border-radius: var(--radius-sm);
 }
 
 @keyframes pulseDot {
@@ -111,6 +203,7 @@ header {
 .live-dot {
   animation: pulseDot 1.4s infinite ease-in-out;
 }
+
 
 
 .logo-wrap {
