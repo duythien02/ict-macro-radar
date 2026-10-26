@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useMemo } from "react";
 import { Trade, AppConfig, MacroSession, PropAccount, AccountType, PropFirm, AccountStatus, CFDPhase, UserProfile } from "@/types";
-import { SES, CHK, PV, SETUPS, DEFAULT_ACCOUNTS, PROP_PRESETS, SQL_SCHEMA_SCRIPT } from "@/lib/constants";
+import { SES, CHK, PV, SETUPS, DEFAULT_ACCOUNTS, PROP_PRESETS, SQL_SCHEMA_SCRIPT, FUTURES_PAIRS, CFD_PAIRS } from "@/lib/constants";
 import {
   fetchTrades,
   insertTrade,
@@ -692,9 +692,14 @@ export default function Home() {
     }
 
     // 3. Đã đủ điều kiện an toàn: Mở form ghi lệnh
+    const targetAcc = accounts.find((a) => a.id === (tradeFormAccId || activeAccountId)) || activeAcc;
+    const isCfd = targetAcc?.accountType === "cfd";
     setTradeForm((f) => ({
       ...f,
       sess: sessionId || f.sess,
+      pair: isCfd && (f.pair === "MNQ" || f.pair === "NQ") ? "NAS100" : f.pair,
+      pv: isCfd && (f.pair === "MNQ" || f.pair === "NQ") ? 1 : (PV[f.pair] || f.pv || 1),
+      ctr: isCfd && f.ctr === 1 ? 0.5 : f.ctr,
       disc: true,
     }));
     setDlgOpen(true);
@@ -716,12 +721,12 @@ export default function Home() {
     const en = Number(tradeForm.entry);
     const sl = Number(tradeForm.sl);
     const ex = Number(tradeForm.exit);
-    const ct = Number(tradeForm.ctr) || 1;
+    const ct = Number(tradeForm.ctr) > 0 ? Number(tradeForm.ctr) : 1;
     if (!en || !sl || !ex) return { pts: 0, pnl: 0, r: 0 };
     const pts = (ex - en) * tradeForm.side;
     const risk = Math.abs(en - sl) || 1;
     const r = pts / risk;
-    const pnl = pts * tradeForm.pv * ct;
+    const pnl = pts * (tradeForm.pv || 1) * ct;
     return { pts, pnl, r };
   }, [tradeForm]);
 
@@ -736,10 +741,11 @@ export default function Home() {
       return;
     }
 
+    const ct = Number(tradeForm.ctr) > 0 ? Number(tradeForm.ctr) : 1;
     const pts = (ex - en) * tradeForm.side;
     const risk = Math.abs(en - sl) || 1;
     const r = pts / risk;
-    const pnl = pts * tradeForm.pv * (Number(tradeForm.ctr) || 1);
+    const pnl = pts * (tradeForm.pv || 1) * ct;
 
     const targetAccId = tradeFormAccId || activeAccountId || accounts[0]?.id || "";
 
@@ -750,7 +756,7 @@ export default function Home() {
       pair: tradeForm.pair.toUpperCase(),
       pv: tradeForm.pv,
       side: tradeForm.side,
-      ctr: Number(tradeForm.ctr) || 1,
+      ctr: ct,
       sess: tradeForm.sess,
       setup: tradeForm.setup,
       entry: en,
@@ -1673,7 +1679,7 @@ export default function Home() {
                             )}
                           </td>
                           <td>
-                            <b>{t.pair}</b> <span className="tag">{t.ctr} hđ</span>
+                            <b>{t.pair}</b> <span className="tag">{t.ctr} {t.pair === "NAS100" || t.pair === "US30" || t.pair === "SPX500" || t.pair === "XAUUSD" || accounts.find((a) => a.id === t.accountId)?.accountType === "cfd" ? "lot" : "hđ"}</span>
                           </td>
                           <td className={t.side > 0 ? "up" : "dn"}>
                             <b>{t.side > 0 ? "Mua (Long)" : "Bán (Short)"}</b>
@@ -1689,7 +1695,7 @@ export default function Home() {
                           </td>
                           <td>
                             <b className={`mono ${t.r >= 0 ? "up" : "dn"}`}>{fmtR(t.r)}</b>
-                            <div className="mono sub-title">${t.pnl.toFixed(0)}</div>
+                            <div className="mono sub-title">${t.pnl.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 2 })}</div>
                           </td>
                           <td>
                             {t.disc ? (
@@ -1931,7 +1937,7 @@ export default function Home() {
                                 <b className="mono">{t.id}</b>
                                 <div className="sub-title">{new Date(t.time).toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" })}</div>
                               </td>
-                              <td><b>{t.pair}</b> <span className="tag">{t.ctr} hđ</span></td>
+                              <td><b>{t.pair}</b> <span className="tag">{t.ctr} {t.pair === "NAS100" || t.pair === "US30" || t.pair === "SPX500" || t.pair === "XAUUSD" || accounts.find((a) => a.id === t.accountId)?.accountType === "cfd" ? "lot" : "hđ"}</span></td>
                               <td className={t.side > 0 ? "up" : "dn"}><b>{t.side > 0 ? "Mua" : "Bán"}</b></td>
                               <td>{s.n}<div className="sub-title">{t.setup}</div></td>
                               <td className="mono sub-title" style={{ fontSize: "12px" }}>
@@ -1940,7 +1946,7 @@ export default function Home() {
                               </td>
                               <td>
                                 <b className={`mono ${t.r >= 0 ? "up" : "dn"}`}>{fmtR(t.r)}</b>
-                                <div className="mono sub-title">${t.pnl.toFixed(0)}</div>
+                                <div className="mono sub-title">${t.pnl.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 2 })}</div>
                               </td>
                               <td>{t.disc ? <span className="tag" style={{ background: "var(--up-bg)", color: "var(--up)" }}>Đúng chuẩn</span> : <span className="tag" style={{ background: "var(--dn-bg)", color: "var(--dn)" }}>Vi phạm</span>}</td>
                               <td>
@@ -2140,161 +2146,232 @@ export default function Home() {
               <button className="btn" onClick={() => setDlgOpen(false)}>Đóng</button>
             </div>
 
-            {/* Account Selector */}
-            {accounts.length > 0 && (
-              <div style={{ marginBottom: "12px" }}>
-                <label>Tài khoản giao dịch</label>
-                <select
-                  value={tradeFormAccId || activeAccountId}
-                  onChange={(e) => setTradeFormAccId(e.target.value)}
-                >
-                  {accounts.map((a) => (
-                    <option key={a.id} value={a.id}>
-                      {a.name} ({a.propFirm.toUpperCase()} - {a.accountType.toUpperCase()} - {a.status.toUpperCase()})
-                    </option>
-                  ))}
-                </select>
-              </div>
-            )}
+            {/* Account Selector & CFD detection */}
+            {(() => {
+              const curDialogAcc = accounts.find((a) => a.id === (tradeFormAccId || activeAccountId)) || activeAcc;
+              const isCfdAcc = curDialogAcc?.accountType === "cfd";
 
-            <div style={{ marginBottom: "12px" }}>
-              <label>Cặp giao dịch</label>
-              <input
-                value={tradeForm.pair}
-                onChange={(e) => {
-                  const p = e.target.value.toUpperCase();
-                  setTradeForm({ ...tradeForm, pair: p, pv: PV[p] || 1 });
-                }}
-              />
-              <div className="chips">
-                {Object.keys(PV).map((k) => (
-                  <button
-                    key={k}
-                    className={tradeForm.pair === k ? "active" : ""}
-                    onClick={() => setTradeForm({ ...tradeForm, pair: k, pv: PV[k] })}
-                  >
-                    {k} (${PV[k]}/điểm)
-                  </button>
-                ))}
-              </div>
-            </div>
+              return (
+                <>
+                  {accounts.length > 0 && (
+                    <div style={{ marginBottom: "12px" }}>
+                      <label>Tài khoản giao dịch</label>
+                      <select
+                        value={tradeFormAccId || activeAccountId}
+                        onChange={(e) => {
+                          const newId = e.target.value;
+                          setTradeFormAccId(newId);
+                          const acc = accounts.find((a) => a.id === newId);
+                          if (acc?.accountType === "cfd") {
+                            if (tradeForm.pair === "MNQ" || tradeForm.pair === "NQ") {
+                              setTradeForm((prev) => ({ ...prev, pair: "NAS100", pv: 1, ctr: prev.ctr === 1 ? 0.5 : prev.ctr }));
+                            }
+                          } else if (acc?.accountType === "futures") {
+                            if (tradeForm.pair === "NAS100") {
+                              setTradeForm((prev) => ({ ...prev, pair: "MNQ", pv: 2, ctr: 1 }));
+                            }
+                          }
+                        }}
+                      >
+                        {accounts.map((a) => (
+                          <option key={a.id} value={a.id}>
+                            {a.name} ({a.propFirm.toUpperCase()} - {a.accountType.toUpperCase()} - {a.status.toUpperCase()})
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
 
-            <div style={{ marginBottom: "12px" }}>
-              <label>Vị thế</label>
-              <div className="side-toggle">
-                <button
-                  className={tradeForm.side === 1 ? "active-long" : ""}
-                  onClick={() => setTradeForm({ ...tradeForm, side: 1 })}
-                >
-                  Mua (Long)
-                </button>
-                <button
-                  className={tradeForm.side === -1 ? "active-short" : ""}
-                  onClick={() => setTradeForm({ ...tradeForm, side: -1 })}
-                >
-                  Bán (Short)
-                </button>
-              </div>
-            </div>
+                  <div style={{ marginBottom: "12px" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "4px" }}>
+                      <label style={{ margin: 0 }}>Cặp giao dịch</label>
+                      <span className="sub-title" style={{ fontSize: "11px", color: isCfdAcc ? "var(--acc)" : "var(--mut)" }}>
+                        {isCfdAcc ? "Tài khoản CFD · Đòn bẩy & Lot (NAS100)" : "Tài khoản Futures · Tick & Hợp đồng (MNQ/NQ)"}
+                      </span>
+                    </div>
+                    <input
+                      value={tradeForm.pair}
+                      placeholder={isCfdAcc ? "Ví dụ: NAS100, US30, XAUUSD..." : "Ví dụ: MNQ, NQ, MES, ES..."}
+                      onChange={(e) => {
+                        const p = e.target.value.toUpperCase();
+                        setTradeForm({ ...tradeForm, pair: p, pv: PV[p] || 1 });
+                      }}
+                    />
+                    <div className="chips">
+                      {isCfdAcc ? (
+                        <>
+                          {CFD_PAIRS.map((item) => (
+                            <button
+                              type="button"
+                              key={item.pair}
+                              className={tradeForm.pair === item.pair ? "active" : ""}
+                              onClick={() => setTradeForm({ ...tradeForm, pair: item.pair, pv: item.pv })}
+                            >
+                              {item.label}
+                            </button>
+                          ))}
+                          <button
+                            type="button"
+                            className="sub-title"
+                            style={{ fontSize: "11px", padding: "4px 8px", background: "none", border: "1px dashed var(--line)" }}
+                            onClick={() => setTradeForm({ ...tradeForm, pair: "MNQ", pv: 2 })}
+                          >
+                            + Đổi sang MNQ (Futures)
+                          </button>
+                        </>
+                      ) : (
+                        <>
+                          {FUTURES_PAIRS.map((item) => (
+                            <button
+                              type="button"
+                              key={item.pair}
+                              className={tradeForm.pair === item.pair ? "active" : ""}
+                              onClick={() => setTradeForm({ ...tradeForm, pair: item.pair, pv: item.pv })}
+                            >
+                              {item.label}
+                            </button>
+                          ))}
+                          <button
+                            type="button"
+                            className="sub-title"
+                            style={{ fontSize: "11px", padding: "4px 8px", background: "none", border: "1px dashed var(--line)" }}
+                            onClick={() => setTradeForm({ ...tradeForm, pair: "NAS100", pv: 1 })}
+                          >
+                            + Đổi sang NAS100 (CFD)
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  </div>
 
-            <div className="form-grid">
-              <div>
-                <label>Số hợp đồng</label>
-                <input
-                  type="number"
-                  min="1"
-                  value={tradeForm.ctr}
-                  onChange={(e) => setTradeForm({ ...tradeForm, ctr: Number(e.target.value) || 1 })}
-                />
-              </div>
-              <div>
-                <label>Phiên Macro</label>
-                <select
-                  value={tradeForm.sess}
-                  onChange={(e) => setTradeForm({ ...tradeForm, sess: e.target.value })}
-                >
-                  {SES.map((s) => (
-                    <option key={s.id} value={s.id}>
-                      {s.n}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label>Setup</label>
-                <select
-                  value={tradeForm.setup}
-                  onChange={(e) => setTradeForm({ ...tradeForm, setup: e.target.value })}
-                >
-                  {SETUPS.map((s) => (
-                    <option key={s} value={s}>
-                      {s}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </div>
+                  <div style={{ marginBottom: "12px" }}>
+                    <label>Vị thế</label>
+                    <div className="side-toggle">
+                      <button
+                        type="button"
+                        className={tradeForm.side === 1 ? "active-long" : ""}
+                        onClick={() => setTradeForm({ ...tradeForm, side: 1 })}
+                      >
+                        Mua (Long)
+                      </button>
+                      <button
+                        type="button"
+                        className={tradeForm.side === -1 ? "active-short" : ""}
+                        onClick={() => setTradeForm({ ...tradeForm, side: -1 })}
+                      >
+                        Bán (Short)
+                      </button>
+                    </div>
+                  </div>
 
-            <div className="form-grid">
-              <div>
-                <label>Giá vào (Entry)</label>
-                <input
-                  type="number"
-                  step="any"
-                  value={tradeForm.entry}
-                  onChange={(e) => setTradeForm({ ...tradeForm, entry: e.target.value })}
-                />
-              </div>
-              <div>
-                <label>Cắt lỗ (Stop Loss)</label>
-                <input
-                  type="number"
-                  step="any"
-                  value={tradeForm.sl}
-                  onChange={(e) => setTradeForm({ ...tradeForm, sl: e.target.value })}
-                />
-              </div>
-              <div>
-                <label>Chốt lời (Take Profit)</label>
-                <input
-                  type="number"
-                  step="any"
-                  value={tradeForm.tp}
-                  onChange={(e) => setTradeForm({ ...tradeForm, tp: e.target.value })}
-                />
-              </div>
-              <div>
-                <label>Giá thoát (Exit)</label>
-                <input
-                  type="number"
-                  step="any"
-                  value={tradeForm.exit}
-                  onChange={(e) => setTradeForm({ ...tradeForm, exit: e.target.value })}
-                />
-              </div>
-            </div>
+                  <div className="form-grid">
+                    <div>
+                      <label>{isCfdAcc ? "Khối lượng (Lot)" : "Số hợp đồng"}</label>
+                      <input
+                        type="number"
+                        step="any"
+                        min="0.01"
+                        value={tradeForm.ctr}
+                        onChange={(e) => setTradeForm({ ...tradeForm, ctr: Number(e.target.value) || 0 })}
+                        placeholder={isCfdAcc ? "Ví dụ: 0.1, 0.5, 1.0..." : "1, 2, 3..."}
+                      />
+                      <div className="sub-title" style={{ fontSize: "11px", marginTop: "4px" }}>
+                        {isCfdAcc
+                          ? `1.0 Lot ${tradeForm.pair} = $${tradeForm.pv || 1}/điểm (hỗ trợ 0.01, 0.1, 0.5...)`
+                          : `1 Hợp đồng ${tradeForm.pair} = $${tradeForm.pv || 1}/điểm`}
+                      </div>
+                    </div>
+                    <div>
+                      <label>Phiên Macro</label>
+                      <select
+                        value={tradeForm.sess}
+                        onChange={(e) => setTradeForm({ ...tradeForm, sess: e.target.value })}
+                      >
+                        {SES.map((s) => (
+                          <option key={s.id} value={s.id}>
+                            {s.n}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label>Setup</label>
+                      <select
+                        value={tradeForm.setup}
+                        onChange={(e) => setTradeForm({ ...tradeForm, setup: e.target.value })}
+                      >
+                        {SETUPS.map((s) => (
+                          <option key={s} value={s}>
+                            {s}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
 
-            {/* Live Real-time Calculation */}
-            <div className="calc-box">
-              <div>
-                <span>Điểm</span>
-                <b className={`mono ${calcValues.pts >= 0 ? "up" : "dn"}`}>
-                  {calcValues.pts.toFixed(2)}
-                </b>
-              </div>
-              <div>
-                <span>Lãi / Lỗ ($)</span>
-                <b className={`mono ${calcValues.pnl >= 0 ? "up" : "dn"}`}>
-                  ${calcValues.pnl.toFixed(0)}
-                </b>
-              </div>
-              <div>
-                <span>Kết quả (R)</span>
-                <b className={`mono ${calcValues.r >= 0 ? "up" : "dn"}`}>
-                  {fmtR(calcValues.r)}
-                </b>
-              </div>
-            </div>
+                  <div className="form-grid">
+                    <div>
+                      <label>Giá vào (Entry)</label>
+                      <input
+                        type="number"
+                        step="any"
+                        value={tradeForm.entry}
+                        onChange={(e) => setTradeForm({ ...tradeForm, entry: e.target.value })}
+                      />
+                    </div>
+                    <div>
+                      <label>Cắt lỗ (Stop Loss)</label>
+                      <input
+                        type="number"
+                        step="any"
+                        value={tradeForm.sl}
+                        onChange={(e) => setTradeForm({ ...tradeForm, sl: e.target.value })}
+                      />
+                    </div>
+                    <div>
+                      <label>Chốt lời (Take Profit)</label>
+                      <input
+                        type="number"
+                        step="any"
+                        value={tradeForm.tp}
+                        onChange={(e) => setTradeForm({ ...tradeForm, tp: e.target.value })}
+                      />
+                    </div>
+                    <div>
+                      <label>Giá thoát (Exit)</label>
+                      <input
+                        type="number"
+                        step="any"
+                        value={tradeForm.exit}
+                        onChange={(e) => setTradeForm({ ...tradeForm, exit: e.target.value })}
+                      />
+                    </div>
+                  </div>
+
+                  {/* Live Real-time Calculation */}
+                  <div className="calc-box">
+                    <div>
+                      <span>Điểm ({tradeForm.pair})</span>
+                      <b className={`mono ${calcValues.pts >= 0 ? "up" : "dn"}`}>
+                        {calcValues.pts >= 0 ? "+" : ""}{calcValues.pts.toFixed(2)} pts
+                      </b>
+                    </div>
+                    <div>
+                      <span>Lãi / Lỗ ($)</span>
+                      <b className={`mono ${calcValues.pnl >= 0 ? "up" : "dn"}`}>
+                        {calcValues.pnl >= 0 ? "+" : ""}${calcValues.pnl.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 2 })}
+                      </b>
+                    </div>
+                    <div>
+                      <span>Kết quả (R)</span>
+                      <b className={`mono ${calcValues.r >= 0 ? "up" : "dn"}`}>
+                        {fmtR(calcValues.r)}
+                      </b>
+                    </div>
+                  </div>
+                </>
+              );
+            })()}
 
             <div style={{ marginBottom: "16px" }}>
               <label>Ghi chú lệnh</label>

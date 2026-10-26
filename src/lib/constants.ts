@@ -28,8 +28,27 @@ export const PV: Record<string, number> = {
   NQ: 20,
   MES: 5,
   ES: 50,
-  MGC: 10
+  MGC: 10,
+  NAS100: 1,
+  US30: 1,
+  SPX500: 1,
+  XAUUSD: 100,
 };
+
+export const FUTURES_PAIRS = [
+  { pair: "MNQ", pv: 2, label: "MNQ ($2/điểm)" },
+  { pair: "NQ", pv: 20, label: "NQ ($20/điểm)" },
+  { pair: "MES", pv: 5, label: "MES ($5/điểm)" },
+  { pair: "ES", pv: 50, label: "ES ($50/điểm)" },
+  { pair: "MGC", pv: 10, label: "MGC ($10/điểm)" },
+];
+
+export const CFD_PAIRS = [
+  { pair: "NAS100", pv: 1, label: "NAS100 ($1/điểm/lot)" },
+  { pair: "US30", pv: 1, label: "US30 ($1/điểm/lot)" },
+  { pair: "SPX500", pv: 1, label: "SPX500 ($1/điểm/lot)" },
+  { pair: "XAUUSD", pv: 100, label: "XAUUSD (Vàng $100/điểm/lot)" },
+];
 
 export const SETUPS = [
   "Liquidity Sweep + FVG",
